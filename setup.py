@@ -1,9 +1,5 @@
 from setuptools import setup
 
-def readme():
-    with open('README.md') as f:
-        return f.read()
-
 setup(name='hsfs',
       version='0.0.1.dev',
       description='Calculate the Stark effect in Rydberg helium using the Numerov method',
