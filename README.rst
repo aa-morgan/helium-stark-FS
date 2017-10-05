@@ -12,7 +12,17 @@ http://dx.doi.org/10.1103/PhysRevA.20.2251
 Install
 -------
 
-dev. environment
+Install using setuptools (requirements below).
+
+.. code-block:: bash
+
+   git clone https://github.com/ad3ller/helium-stark-FS
+   cd helium-stark-FS
+   python setup.py install
+
+
+Version information
+-------------------
 
 ===================  =======================================
 Python               3.6.1 64bit [MSC v.1900 64 bit (AMD64)]
@@ -28,7 +38,3 @@ tabulate             0.8.1
 tqdm                 4.15.0
 version_information  1.0.3
 ===================  =======================================
-
-.. code-block:: bash
-
-   python setup.py install
