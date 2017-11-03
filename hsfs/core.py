@@ -101,7 +101,7 @@ def get_qd(n, L, S, J, **kwargs):
         qd = 0.0
     return qd
 
-def energy(n, n_eff, Z=2):
+def energy(n, n_eff, Z=1):
     """ the ionization energy (atomic units) with relativistic and finite mass corrections.
         Drake 1999 (doi: 10.1238/Physica.Topical.083a00083), eqn. 21
     """
