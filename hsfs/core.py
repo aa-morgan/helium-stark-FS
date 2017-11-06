@@ -175,7 +175,7 @@ class StarkMatrix(object):
         mat_s = self.stark_matrix(**kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **kwargs):
             F = field[i] * e * a_0 / En_h
-            H_S = mu_me * F * mat_s
+            H_S = F * mat_s / mu_me
             # diagonalise, assuming matrix is Hermitian.
             eig_val[i] = np.linalg.eigh(self.h0_matrix() + H_S)[0]
         return eig_val * En_h
