@@ -83,7 +83,7 @@ class State(object):
     def __str__(self):
         """ print quantum numbers like |n l S J MJ >
         """
-        return u"\u2758 {} {} {} {} {} \u27E9".format(self.n, self.l, self.S, self.J, self.MJ)
+        return u"\u2758 {} {} {} {} {} \u27E9".format(self.n, self.L, self.S, self.J, self.MJ)
     
     def asdict(self):
         """ quantum numbers as a dictionary.
@@ -333,7 +333,7 @@ class Hamiltonian(object):
         else:
             H_Z = 0.0
         # optional singlet_triplet coupling 
-        if 'singlet_triplet_coupling' in kwargs:
+        if kwargs.get('singlet_triplet_coupling', False):
             print('Using Singlet-Triplet coupling')
             H_spin = self.singlet_triplet_coupling_matrix(**kwargs)
             print('H_spin sum: ', np.sum(H_spin))
@@ -510,11 +510,15 @@ def basis_states(n_min, n_max, **kwargs):
     return basis
 
 def stark_int(state_1, state_2, **kwargs):
-    stark_method = kwargs.get('stark_method', 'dev2')
+    stark_method = kwargs.get('stark_method', 'dev3')
     if stark_method == 'dev':
         return stark_int_dev(state_1, state_2, **kwargs)
     elif stark_method == 'dev2':
         return stark_int_dev2(state_1, state_2, **kwargs)
+    elif stark_method == 'dev3':
+        return stark_int_dev3(state_1, state_2, **kwargs)
+    elif stark_method == 'dev4':
+        return stark_int_dev4(state_1, state_2, **kwargs)
     elif stark_method == 'psfs':
         return stark_int_psfs(state_1, state_2, **kwargs)
     elif stark_method == 'alt1':
@@ -538,8 +542,10 @@ def stark_int_dev(state_1, state_2, **kwargs):
         ML = [state_1.MJ - MS[0],
               state_2.MJ - MS[1]]
         tmp = []
+        # Loop through all combination of ML for each state
         for ML_1 in ML[0]:
             for ML_2 in ML[1]:
+                # Calculate the angular overlap term using expliciting equations
                 ang_overlap_stark = ang_overlap(state_1.L, state_2.L, ML_1, ML_2, **kwargs)
                 if ang_overlap_stark != 0.0:
                     tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
@@ -556,46 +562,127 @@ def stark_int_dev2(state_1, state_2, **kwargs):
     """ Stark interaction between two states.
         
         <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """ 
+    """     
+    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
+    if Efield_vec == [0.0,0.0,1.0]: # parallel fields
+        q_arr   = [0]
+        tau_arr = [1]
+    elif Efield_vec[2] == 0.0: # perpendicular fields
+        q_arr   = [1,-1]
+        tau_arr = [-1/(2**0.5), +1/(2**0.5)]
+    
     delta_L = state_1.L - state_2.L
     delta_S = state_1.S - state_2.S
     delta_MJ = state_1.MJ - state_2.MJ  
-    
-    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-    if Efield_vec == [0.0,0.0,1.0]:
-        field_orientation = 'parallel'
-        q_arr   = [0]
-        tau_arr = [1]
-    elif Efield_vec[2] == 0.0:
-        field_orientation = 'perpendicular'
-        q_arr   = [1,-1]
-        tau_arr = [-1/(2**0.5), +1/(2**0.5)]
-        
     if abs(delta_L) == 1 and delta_S == 0:
         MS = [np.arange(-state_1.S, state_1.S + 1),
               np.arange(-state_2.S, state_2.S + 1)]
         ML = [state_1.MJ - MS[0],
               state_2.MJ - MS[1]]
         tmp = []
+        # Loop through all combination of ML for each state
         for ML_1 in ML[0]:
             for ML_2 in ML[1]:
+                # Calculate the angular overlap term using Wigner-3J symbols
                 ang_tmp = []
                 for q, tau in zip(q_arr, tau_arr):
-                    wigner_tmp = wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1)
-                    #if wigner_tmp != 0.0:
-                    #    wigner_tmp = wigner_tmp.evalf()
-                    ang_tmp.append(( tau * wigner_tmp * np.max([state_1.L, state_2.L])**0.5))
-                ang_overlap_stark = np.sum(ang_tmp)
+                    ang_tmp.append(tau * wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1))
+                ang_overlap_stark = np.max([state_1.L, state_2.L])**0.5 * np.sum(ang_tmp)
                 if ang_overlap_stark != 0.0:
                     tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
                                             ML_1, state_1.MJ - ML_1, -state_1.MJ)) * \
                                float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
                                             ML_2, state_2.MJ - ML_2, -state_2.MJ)) * \
                                ang_overlap_stark)
+
         # Stark interaction
         return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
     else:
         return 0.0
+    
+def stark_int_dev3(state_1, state_2, **kwargs):
+    """ Stark interaction between two states.
+        
+        <n' l' S' J' MJ'| H_S |n l S J MJ>.
+    """     
+    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
+    if Efield_vec == [0.0,0.0,1.0]: # parallel fields
+        field_orientation = 'parallel'
+        q_arr   = [0]
+        tau_arr = [1.]
+    elif Efield_vec[2] == 0.0: # perpendicular fields
+        field_orientation = 'crossed'
+        q_arr   = [1,-1]
+        tau_arr = [(1./2)**0.5, (1./2)**0.5]
+    
+    delta_L = state_1.L - state_2.L
+    delta_S = state_1.S - state_2.S
+    delta_MJ = state_1.MJ - state_2.MJ  
+    # Projection of spin, cannot change
+    if abs(delta_L) == 1 and delta_S == 0 and \
+     ((field_orientation=='parallel' and delta_MJ==0) or \
+      (field_orientation=='crossed' and abs(delta_MJ)==1)):
+
+        # For accumulating each element in the ML sum
+        tmp = []
+        # Loop through all combination of ML for each state
+        for MS_1 in np.arange(-state_1.S, state_1.S + 1):
+            for MS_2 in np.arange(-state_2.S, state_2.S + 1):
+                delta_MS = MS_1 - MS_2
+                # Projection of spin, cannot change
+                if delta_MS == 0:
+                    ML_1 = state_1.MJ - MS_1
+                    ML_2 = state_2.MJ - MS_2
+                    # For accumulating each element in the angular component, q sum
+                    ang_tmp = []
+                    for q, tau in zip(q_arr, tau_arr):
+                        ang_tmp.append(tau * float(wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1)))
+                    # Calculate the angular overlap term using Wigner-3J symbols
+                    ang_overlap_stark = ((2*state_2.L+1)*(2*state_1.L+1))**0.5 * \
+                                          np.sum(ang_tmp) * \
+                                          wigner_3j(state_2.L, 1, state_1.L, 0, 0, 0)
+                    if ang_overlap_stark != 0.0:
+                        tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
+                                   ML_1, state_1.MJ - ML_1, state_1.MJ)) * \
+                                   float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
+                                   ML_2, state_2.MJ - ML_2, state_2.MJ)) * \
+                                   ang_overlap_stark)
+
+        # Stark interaction
+        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
+    else:
+        return 0.0
+
+def stark_int_dev4(state_1, state_2, **kwargs):
+    """ Stark interaction between two states.
+        
+        <n' l' S' J' MJ'| H_S |n l S J MJ>.
+    """     
+    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
+    if Efield_vec == [0.0,0.0,1.0]: # parallel fields
+        q_arr   = [0]
+        tau_arr = [1]
+    elif Efield_vec[2] == 0.0: # perpendicular fields
+        q_arr   = [1,-1]
+        tau_arr = [(1./2)**0.5, -(1./2)**0.5]
+    
+    delta_L = state_1.L - state_2.L
+    delta_S = state_1.S - state_2.S
+    delta_MJ = state_1.MJ - state_2.MJ  
+    if abs(delta_L) == 1 and delta_S == 0:
+        S = state_1.S
+        tmp = []
+        for q, tau in zip(q_arr, tau_arr):
+            tmp.append( (-1.)**(int(state_1.J - state_1.MJ)) * \
+                        wigner_3j(state_1.J, 1, state_2.J, -state_1.MJ, -q, state_2.MJ) * \
+                        (-1.)**(int(state_1.L + S + state_2.J + 1.)) * \
+                        np.sqrt((2.*state_1.J+1.) * (2.*state_2.J+1.)) * \
+                        wigner_6j(state_1.J, 1., state_2.J, state_2.L, S, state_1.L) * \
+                        (-1.)**state_1.L * np.sqrt((2.*state_1.L+1.) * (2.*state_2.L+1.)) * \
+                        wigner_3j(state_1.L, 1, state_2.L, 0, 0, 0) * tau)
+            
+        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
+    return 0.0
 
 def stark_int_psfs(state_1, state_2, **kwargs):
     """ Stark interaction between two states,
@@ -718,6 +805,8 @@ def zeeman_int(state_1, state_2, **kwargs):
         return zeeman_int_psfs(state_1, state_2, **kwargs)
     elif zeeman_method == 'hsfs':
         return zeeman_int_hsfs(state_1, state_2, **kwargs)
+    elif zeeman_method == 'dev':
+        return zeeman_int_dev(state_1, state_2, **kwargs)
     else:
         raise Exception('Zeeman int method not recognised')
     
@@ -758,38 +847,38 @@ def zeeman_int_hsfs(state_1, state_2, **kwargs):
            g_S2 = g_s * (((2 * S + 1) * S * (S + 1))/6)**0.5
            h_z = (-1)**(1 - MJ) * ((2 * state_1.J + 1) * (2 * state_2.J + 1))**0.5 * \
                  wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * 6**0.5 * ( \
-                         wigner_6j(L, state_2.J, S, state_1.J, L, 1) * \
-                         (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
-                         wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
-                         (-1)**(L + S) * g_S2)
+                 wigner_6j(L, state_2.J, S, state_1.J, L, S) * \
+                 (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
+                 wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
+                 (-1)**(L + S) * g_S2)
     else:
         h_z = 0.0
     return h_z
 
-def singlet_triplet_coupling_int_alt(state_1, state_2, **kwargs):
-    """ Singlet-Triplet interaction between two states.
+def zeeman_int_dev(state_1, state_2, **kwargs):
+    """ Zeeman interaction between two states,
+    
+        <n' l' S' J' MJ'| H_Zeeman |n l S J MJ>.
     """
     delta_S = state_2.S - state_1.S
     delta_L = state_2.L - state_1.L
-    delta_J = state_2.J - state_1.J
     delta_MJ = state_2.MJ - state_1.MJ
-    if abs(delta_S) == 1 and \
-       delta_J == 0 and \
-       delta_MJ == 0 and \
-       delta_L in [0, 1, -1]:
-        if state_1.L == 0 or state_2.L == 0:
-            return 0.0
-        elif state_1.L <= 2:
-            return 0.0
-        elif state_1.L == 3:
-            return kwargs.get('singlet_triplet_coupling', 0.0) * 0.5
-        else:
-            return kwargs.get('singlet_triplet_coupling', 0.0) * 1.0
+    if delta_L == 0 and \
+       delta_MJ == 0:
+        L = state_1.L
+        MJ = state_1.MJ
+        S = state_1.S
+        return  (-1.0)**(state_1.L + state_1.MJ) * \
+                ((-1.0)**(state_1.S + state_2.S) + 1. ) * \
+                (3.0 * (2*state_2.J + 1) * (2*state_1.J + 1))**0.5 * \
+                wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * \
+                wigner_6j(S, L, state_2.J, state_1.J, 1, S)
     else:
         return 0.0
     
 def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
     """ Singlet-Triplet interaction between two states.
+        Angular momentum: Understanding spatial aspects in Chemistry and Physics - Richard N. Zare. Eqn. 5.79
     """
     delta_S = state_2.S - state_1.S
     delta_L = state_2.L - state_1.L
@@ -799,15 +888,15 @@ def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
        delta_J == 0 and \
        delta_MJ == 0 and \
        delta_L == 0:
-        eta_1 = 1.0 * kwargs.get('singlet_triplet_coupling', 0.0)
-        eta_2 = 1.0 * kwargs.get('singlet_triplet_coupling', 0.0)
         L1 = state_1.L
         L2 = 0.0 # inner electron is 1s state
-        return ((eta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
+        zeta_1 = rad_overlap(state_1.n, L1, state_1.n, L2, p=-3.0)
+        zeta_2 = rad_overlap(state_2.n, L1, state_2.n, L2, p=-3.0)
+        return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
                    ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
                     * (2*L1+1) * L1 * (L1+1) * (3/2))**0.5 * \
                     wigner_6j(L1, state_1.L, L2, state_2.L, L1, 1)) + \
-               (eta_2 * (-1)**(2*state_1.S + state_1.L + state_2.L + state_1.J + L1 + L2 + 1) * \
+               (zeta_2 * (-1)**(2*state_1.S + state_1.L + state_2.L + state_1.J + L1 + L2 + 1) * \
                    ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
                     * (2*L2+1) * L2 * (L2+1) * (3/2))**0.5 * \
                     wigner_6j(L2, state_1.L, L1, state_2.L, L2, 1))) * \
@@ -824,7 +913,7 @@ def constants_info():
         'Rydberg constant, $R_{\infty}$': Ry,
         'electron charge, $e$': e,
         'fine structure constant': alpha,
-        'permeability of free space, $\mu_B$': m_u,
+        'atomic mass': m_u,
         'Hatree energy': En_h,
         'Bohr radius, $a_0$': a_0,
         'Bohr magneton, $\mu_B$': mu_B,
