@@ -208,7 +208,7 @@ class Hamiltonian(object):
                         self._stark_matrix[j][i] = self._stark_matrix[i][j]
         else:
             print('Using cached Stark matrix') 
-        if kwargs.get('save_matrices', False):
+        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False):
             save_dir = kwargs.get('matrices_dir', './')
             save_matrix(self._stark_matrix, 'stark', self, save_dir)
         return self._stark_matrix
@@ -233,7 +233,7 @@ class Hamiltonian(object):
                             self._zeeman_matrix[j][i] = self._zeeman_matrix[i][j]
         else:
             print('Using cached Zeeman matrix')
-        if kwargs.get('save_matrices', False):
+        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False)):
             save_dir = kwargs.get('matrices_dir', './')
             save_matrix(self._zeeman_matrix, 'zeeman', self, save_dir)
         return self._zeeman_matrix
@@ -258,7 +258,7 @@ class Hamiltonian(object):
                             self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
         else:
             print('Using cached Singlet-Triplet matrix')
-        if kwargs.get('save_matrices', False):
+        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False):
             save_dir = kwargs.get('matrices_dir', './')
             save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, save_dir)
         return self._singlet_triplet_coupling_matrix
@@ -733,7 +733,7 @@ def save_matrix(matrix, matrix_type, ham, save_dir):
                 'S=' + str(ham.S) + '_' + \
                 'MJ=' + str(ham.MJ) + '_' + \
                 'MJ_max=' + str(ham.MJ_max)
-    np.save(save_dir+filename, matrix)
+    np.savez_compressed(save_dir+filename, matrix=matrix)
     print('Saved', matrix_type, 'matrix as, ')
     print('\t', save_dir+filename)
 
@@ -742,18 +742,18 @@ def load_matrix(matrix_type, ham, load_dir):
                 'l_max=' + str(ham.l_max) + '_' + \
                 'S=' + str(ham.S) + '_' + \
                 'MJ=' + str(ham.MJ) + '_' + \
-                'MJ_max=' + str(ham.MJ_max) + '.npy'
+                'MJ_max=' + str(ham.MJ_max) + '.npz'
     mat = np.load(load_dir+filename)
     print('Loaded', matrix_type, 'matrix from, ')
     print('\t', load_dir+filename)
-    return mat
+    return mat['matrix']
 
 def check_matrix(matrix_type, ham, load_dir):
     filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
                 'l_max=' + str(ham.l_max) + '_' + \
                 'S=' + str(ham.S) + '_' + \
                 'MJ=' + str(ham.MJ) + '_' + \
-                'MJ_max=' + str(ham.MJ_max) + '.npy'
+                'MJ_max=' + str(ham.MJ_max) + '.npz'
     return os.path.isfile(load_dir+filename) 
 
 def constants_info():
