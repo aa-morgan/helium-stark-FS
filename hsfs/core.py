@@ -12,6 +12,7 @@ from sympy.physics.wigner import clebsch_gordan, wigner_3j, wigner_6j
 from .drake1999 import quantum_defects
 from .numerov import rad_overlap
 import pandas as pd
+import os.path
 
 #CODATA 2014, DOI: 10.1103/RevModPhys.88.035009
 c = 299792458.0 ## speed of light in vacuum
@@ -40,6 +41,9 @@ Ry_M = Ry * mu_me
 ## g-factors
 g_L = 1 - m_e / mass_helium_core
 g_s = 2.00231930436182
+
+# Other parameters
+CACHE_DEFAULT = False
 
 @attr.s()
 class State(object):
@@ -145,6 +149,10 @@ class Hamiltonian(object):
     def __init__(self, n_min, n_max, l_max=None, S=None, MJ=None, MJ_max=None):
         self.n_min = n_min
         self.n_max = n_max
+        self.l_max = l_max
+        self.S = S
+        self.MJ = MJ
+        self.MJ_max = MJ_max
         self.basis = basis_states(n_min, n_max, l_max=l_max, S=S, MJ=MJ, MJ_max=MJ_max)
         self.sort_basis('E0', inplace=True)
         self.num_states = len(self.basis)
@@ -172,53 +180,87 @@ class Hamiltonian(object):
         arr = self.attrib(attribute)
         return [i for i, x in enumerate(arr) if x == value]
 
-    def h0_matrix(self, cache=False):
+    def h0_matrix(self, **kwargs):
         """ Unperturbed Hamiltonian.
         """
+        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._h0_matrix is None or cache is False:
             self._h0_matrix = np.diag(self.attrib('E0'))
         return self._h0_matrix
 
-    def stark_matrix(self, cache=False, **kwargs):
+    def stark_matrix(self, **kwargs):
         """ Stark interaction matrix.
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
+        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._stark_matrix is None or cache is False:
-            self._stark_matrix = np.zeros([self.num_states, self.num_states])
-            for i in trange(self.num_states, desc="calculate Stark terms", **tqdm_kwargs):
-                # off-diagonal elements only
-                for j in range(i + 1, self.num_states):
-                    self._stark_matrix[i][j] = stark_int(self.basis[i], self.basis[j], **kwargs)
-                    # assume matrix is symmetric
-                    self._stark_matrix[j][i] = self._stark_matrix[i][j]
+            load_dir = kwargs.get('matrices_dir', './')
+            if kwargs.get('load_matrices', False) and \
+               check_matrix('stark', self, load_dir):
+                self._stark_matrix = load_matrix('stark', self, load_dir)
+            else:
+                self._stark_matrix = np.zeros([self.num_states, self.num_states])
+                for i in trange(self.num_states, desc="calculate Stark terms", **tqdm_kwargs):
+                    # off-diagonal elements only
+                    for j in range(i + 1, self.num_states):
+                        self._stark_matrix[i][j] = stark_int(self.basis[i], self.basis[j], **kwargs)
+                        # assume matrix is symmetric
+                        self._stark_matrix[j][i] = self._stark_matrix[i][j]
+        else:
+            print('Using cached Stark matrix') 
+        if kwargs.get('save_matrices', False):
+            save_dir = kwargs.get('matrices_dir', './')
+            save_matrix(self._stark_matrix, 'stark', self, save_dir)
         return self._stark_matrix
 
-    def zeeman_matrix(self, cache=False, **kwargs):
+    def zeeman_matrix(self, **kwargs):
         """ Zeeman interaction matrix.
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
+        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._zeeman_matrix is None or cache is False:
-            self._zeeman_matrix = np.zeros([self.num_states, self.num_states])
-            for i in trange(self.num_states, desc="calculate Zeeman terms", **tqdm_kwargs):
-                for j in range(i, self.num_states):
-                    self._zeeman_matrix[i][j] = zeeman_int(self.basis[i], self.basis[j], **kwargs)
-                    # assume matrix is symmetric
-                    if i != j:
-                        self._zeeman_matrix[j][i] = self._zeeman_matrix[i][j]
+            load_dir = kwargs.get('matrices_dir', './')
+            if kwargs.get('load_matrices', False) and \
+               check_matrix('zeeman', self, load_dir):
+                self._zeeman_matrix = load_matrix('zeeman', self, load_dir)
+            else:
+                self._zeeman_matrix = np.zeros([self.num_states, self.num_states])
+                for i in trange(self.num_states, desc="calculate Zeeman terms", **tqdm_kwargs):
+                    for j in range(i, self.num_states):
+                        self._zeeman_matrix[i][j] = zeeman_int(self.basis[i], self.basis[j], **kwargs)
+                        # assume matrix is symmetric
+                        if i != j:
+                            self._zeeman_matrix[j][i] = self._zeeman_matrix[i][j]
+        else:
+            print('Using cached Zeeman matrix')
+        if kwargs.get('save_matrices', False):
+            save_dir = kwargs.get('matrices_dir', './')
+            save_matrix(self._zeeman_matrix, 'zeeman', self, save_dir)
         return self._zeeman_matrix
     
-    def singlet_triplet_coupling_matrix(self, cache=False, **kwargs):
+    def singlet_triplet_coupling_matrix(self, **kwargs):
         """ Singlet-Triplet coupling matrix
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
+        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._singlet_triplet_coupling_matrix is None or cache is False:
-            self._singlet_triplet_coupling_matrix = np.zeros([self.num_states, self.num_states])
-            for i in trange(self.num_states, desc="calculate singlet-triplet coupling terms", **tqdm_kwargs):
-                for j in range(i, self.num_states):
-                    self._singlet_triplet_coupling_matrix[i][j] = singlet_triplet_coupling_int(self.basis[i], self.basis[j], **kwargs)
-                    # assume matrix is symmetric
-                    if i != j:
-                        self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
+            load_dir = kwargs.get('matrices_dir', './')
+            if kwargs.get('load_matrices', False) and \
+               check_matrix('singlet-triplet', self, load_dir):
+                self._singlet_triplet_coupling_matrix = load_matrix('singlet-triplet', self, load_dir)
+            else:
+                self._singlet_triplet_coupling_matrix = np.zeros([self.num_states, self.num_states])
+                for i in trange(self.num_states, desc="calculate singlet-triplet coupling terms", **tqdm_kwargs):
+                    for j in range(i, self.num_states):
+                        self._singlet_triplet_coupling_matrix[i][j] = singlet_triplet_coupling_int(self.basis[i], self.basis[j], **kwargs)
+                        # assume matrix is symmetric
+                        if i != j:
+                            self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
+        else:
+            print('Using cached Singlet-Triplet matrix')
+        if kwargs.get('save_matrices', False):
+            save_dir = kwargs.get('matrices_dir', './')
+            save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, save_dir)
         return self._singlet_triplet_coupling_matrix
 
     def stark_zeeman(self, Efield, Bfield=0.0, **kwargs):
@@ -264,16 +306,16 @@ class Hamiltonian(object):
         # diagonalise H_tot, assuming matrix is Hermitian.
         if get_eig_vec:
             # eigenvalues and eigenvectors
-            eig_val, eig_vec = np.linalg.eigh(self.h0_matrix() + H_int)
+            eig_val, eig_vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
             return eig_val * En_h, eig_vec
         elif eig_elements is not None:
             # eigenvalues and partial eigenvector amplitudes
-            eig_val, vec = np.linalg.eigh(self.h0_matrix() + H_int)
+            eig_val, vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
             eig_amp = np.sum(vec[eig_elements]**2.0, axis=0)
             return eig_val, eig_amp
         else:
             # eigenvalues
-            eig_val = np.linalg.eigh(self.h0_matrix() + H_int)[0]
+            eig_val = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
             return eig_val * En_h
 
         
@@ -334,7 +376,6 @@ class Hamiltonian(object):
             H_Z = 0.0
         # optional singlet_triplet coupling 
         if kwargs.get('singlet_triplet_coupling', False):
-            print('Using Singlet-Triplet coupling')
             H_spin = self.singlet_triplet_coupling_matrix(**kwargs)
             print('H_spin sum: ', np.sum(H_spin))
         else:
@@ -350,14 +391,14 @@ class Hamiltonian(object):
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
-                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix() + H_int)
+                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
             elif eig_elements is not None:
                 # eigenvalues and partial eigenvector amplitudes
-                eig_val[i], vec = np.linalg.eigh(self.h0_matrix() + H_int)
+                eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
                 eig_amp[i] = np.sum(vec[eig_elements]**2.0, axis=0)            
             else:
                 # eigenvalues
-                eig_val[i] = np.linalg.eigh(self.h0_matrix() + H_int)[0]
+                eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
         # output
         if get_eig_vec:
             return eig_val * En_h, eig_vec
@@ -422,14 +463,14 @@ class Hamiltonian(object):
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
-                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix() + H_int)
+                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
             elif eig_elements is not None:
                 # eigenvalues and partial eigenvector amplitudes
-                eig_val[i], vec = np.linalg.eigh(self.h0_matrix() + H_int)
+                eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
                 eig_amp[i] = np.sum(vec[eig_elements]**2.0, axis=0)            
             else:
                 # eigenvalues
-                eig_val[i] = np.linalg.eigh(self.h0_matrix() + H_int)[0]
+                eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
         # output
         if get_eig_vec:
             return eig_val * En_h, eig_vec
@@ -510,97 +551,15 @@ def basis_states(n_min, n_max, **kwargs):
     return basis
 
 def stark_int(state_1, state_2, **kwargs):
-    stark_method = kwargs.get('stark_method', 'dev3')
-    if stark_method == 'dev':
-        return stark_int_dev(state_1, state_2, **kwargs)
-    elif stark_method == 'dev2':
-        return stark_int_dev2(state_1, state_2, **kwargs)
-    elif stark_method == 'dev3':
-        return stark_int_dev3(state_1, state_2, **kwargs)
-    elif stark_method == 'dev4':
-        return stark_int_dev4(state_1, state_2, **kwargs)
-    elif stark_method == 'psfs':
-        return stark_int_psfs(state_1, state_2, **kwargs)
-    elif stark_method == 'alt1':
-        return stark_int_alt1(state_1, state_2, **kwargs)
-    elif stark_method == 'alt2':
-        return stark_int_alt2(state_1, state_2, **kwargs)
+    stark_method = kwargs.get('stark_method', '3j')
+    if stark_method == '3j':
+        return stark_int_3j(state_1, state_2, **kwargs)
+    elif stark_method == '6j':
+        return stark_int_6j(state_1, state_2, **kwargs)
     else:
         raise Exception('Stark int method not recognised')
-
-def stark_int_dev(state_1, state_2, **kwargs):
-    """ Stark interaction between two states.
-        
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """ 
-    delta_L = state_1.L - state_2.L
-    delta_S = state_1.S - state_2.S
-    delta_MJ = state_1.MJ - state_2.MJ        
-    if abs(delta_L) == 1 and delta_S == 0:
-        MS = [np.arange(-state_1.S, state_1.S + 1),
-              np.arange(-state_2.S, state_2.S + 1)]
-        ML = [state_1.MJ - MS[0],
-              state_2.MJ - MS[1]]
-        tmp = []
-        # Loop through all combination of ML for each state
-        for ML_1 in ML[0]:
-            for ML_2 in ML[1]:
-                # Calculate the angular overlap term using expliciting equations
-                ang_overlap_stark = ang_overlap(state_1.L, state_2.L, ML_1, ML_2, **kwargs)
-                if ang_overlap_stark != 0.0:
-                    tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
-                                            ML_1, state_1.MJ - ML_1, -state_1.MJ)) * \
-                               float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
-                                            ML_2, state_2.MJ - ML_2, -state_2.MJ)) * \
-                               ang_overlap_stark)
-        # Stark interaction
-        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    else:
-        return 0.0
     
-def stark_int_dev2(state_1, state_2, **kwargs):
-    """ Stark interaction between two states.
-        
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """     
-    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-    if Efield_vec == [0.0,0.0,1.0]: # parallel fields
-        q_arr   = [0]
-        tau_arr = [1]
-    elif Efield_vec[2] == 0.0: # perpendicular fields
-        q_arr   = [1,-1]
-        tau_arr = [-1/(2**0.5), +1/(2**0.5)]
-    
-    delta_L = state_1.L - state_2.L
-    delta_S = state_1.S - state_2.S
-    delta_MJ = state_1.MJ - state_2.MJ  
-    if abs(delta_L) == 1 and delta_S == 0:
-        MS = [np.arange(-state_1.S, state_1.S + 1),
-              np.arange(-state_2.S, state_2.S + 1)]
-        ML = [state_1.MJ - MS[0],
-              state_2.MJ - MS[1]]
-        tmp = []
-        # Loop through all combination of ML for each state
-        for ML_1 in ML[0]:
-            for ML_2 in ML[1]:
-                # Calculate the angular overlap term using Wigner-3J symbols
-                ang_tmp = []
-                for q, tau in zip(q_arr, tau_arr):
-                    ang_tmp.append(tau * wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1))
-                ang_overlap_stark = np.max([state_1.L, state_2.L])**0.5 * np.sum(ang_tmp)
-                if ang_overlap_stark != 0.0:
-                    tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
-                                            ML_1, state_1.MJ - ML_1, -state_1.MJ)) * \
-                               float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
-                                            ML_2, state_2.MJ - ML_2, -state_2.MJ)) * \
-                               ang_overlap_stark)
-
-        # Stark interaction
-        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    else:
-        return 0.0
-    
-def stark_int_dev3(state_1, state_2, **kwargs):
+def stark_int_3j(state_1, state_2, **kwargs):
     """ Stark interaction between two states.
         
         <n' l' S' J' MJ'| H_S |n l S J MJ>.
@@ -611,7 +570,7 @@ def stark_int_dev3(state_1, state_2, **kwargs):
         q_arr   = [0]
         tau_arr = [1.]
     elif Efield_vec[2] == 0.0: # perpendicular fields
-        field_orientation = 'crossed'
+        field_orientation = 'perpendicular'
         q_arr   = [1,-1]
         tau_arr = [(1./2)**0.5, (1./2)**0.5]
     
@@ -620,40 +579,40 @@ def stark_int_dev3(state_1, state_2, **kwargs):
     delta_MJ = state_1.MJ - state_2.MJ  
     # Projection of spin, cannot change
     if abs(delta_L) == 1 and delta_S == 0 and \
-     ((field_orientation=='parallel' and delta_MJ==0) or \
-      (field_orientation=='crossed' and abs(delta_MJ)==1)):
-
+     ((field_orientation=='parallel'      and     delta_MJ  == 0) or \
+      (field_orientation=='perpendicular' and abs(delta_MJ) == 1)):
         # For accumulating each element in the ML sum
-        tmp = []
+        sum_ML = []
         # Loop through all combination of ML for each state
         for MS_1 in np.arange(-state_1.S, state_1.S + 1):
             for MS_2 in np.arange(-state_2.S, state_2.S + 1):
                 delta_MS = MS_1 - MS_2
-                # Projection of spin, cannot change
-                if delta_MS == 0:
+                # Change in projection of spin:  0, +/- 1
+                if ((field_orientation=='parallel'      and     delta_MS  in [0,1]) or \
+                    (field_orientation=='perpendicular' and abs(delta_MS) in [0,1])):
                     ML_1 = state_1.MJ - MS_1
                     ML_2 = state_2.MJ - MS_2
                     # For accumulating each element in the angular component, q sum
-                    ang_tmp = []
+                    sum_q = []
                     for q, tau in zip(q_arr, tau_arr):
-                        ang_tmp.append(tau * float(wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1)))
+                        sum_q.append(tau * float(wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1)))
                     # Calculate the angular overlap term using Wigner-3J symbols
                     ang_overlap_stark = ((2*state_2.L+1)*(2*state_1.L+1))**0.5 * \
-                                          np.sum(ang_tmp) * \
+                                          np.sum(sum_q) * \
                                           wigner_3j(state_2.L, 1, state_1.L, 0, 0, 0)
                     if ang_overlap_stark != 0.0:
-                        tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
-                                   ML_1, state_1.MJ - ML_1, state_1.MJ)) * \
-                                   float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
-                                   ML_2, state_2.MJ - ML_2, state_2.MJ)) * \
-                                   ang_overlap_stark)
+                        sum_ML.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
+                                      ML_1, state_1.MJ - ML_1, state_1.MJ)) * \
+                                      float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
+                                      ML_2, state_2.MJ - ML_2, state_2.MJ)) * \
+                                      ang_overlap_stark)
 
         # Stark interaction
-        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
+        return np.sum(sum_ML) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
     else:
         return 0.0
 
-def stark_int_dev4(state_1, state_2, **kwargs):
+def stark_int_6j(state_1, state_2, **kwargs):
     """ Stark interaction between two states.
         
         <n' l' S' J' MJ'| H_S |n l S J MJ>.
@@ -671,9 +630,9 @@ def stark_int_dev4(state_1, state_2, **kwargs):
     delta_MJ = state_1.MJ - state_2.MJ  
     if abs(delta_L) == 1 and delta_S == 0:
         S = state_1.S
-        tmp = []
+        sum_q = []
         for q, tau in zip(q_arr, tau_arr):
-            tmp.append( (-1.)**(int(state_1.J - state_1.MJ)) * \
+            sum_q.append( (-1.)**(int(state_1.J - state_1.MJ)) * \
                         wigner_3j(state_1.J, 1, state_2.J, -state_1.MJ, -q, state_2.MJ) * \
                         (-1.)**(int(state_1.L + S + state_2.J + 1.)) * \
                         np.sqrt((2.*state_1.J+1.) * (2.*state_2.J+1.)) * \
@@ -681,153 +640,17 @@ def stark_int_dev4(state_1, state_2, **kwargs):
                         (-1.)**state_1.L * np.sqrt((2.*state_1.L+1.) * (2.*state_2.L+1.)) * \
                         wigner_3j(state_1.L, 1, state_2.L, 0, 0, 0) * tau)
             
-        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    return 0.0
-
-def stark_int_psfs(state_1, state_2, **kwargs):
-    """ Stark interaction between two states,
-    
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """
-    delta_L = state_2.L - state_1.L
-    delta_S = state_2.S - state_1.S
-    L_max = max(state_1.L, state_2.L)
-    if abs(delta_L) == 1 and delta_S == 0:
-        return (-1.0)**(state_1.S +1 + state_2.MJ) * \
-                np.sqrt(L_max * (2*state_2.J + 1)*(2*state_1.J + 1)) * \
-                wigner_3j(state_2.J, 1, state_1.J, -state_2.MJ, 0, state_1.MJ) * \
-                wigner_6j(state_2.S, state_2.L, state_2.J, 1, state_1.J, state_1.L) * \
-                rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    else:
-        return 0.0
-
-def stark_int_alt1(state_1, state_2, **kwargs):
-    """ Stark interaction between two states.
-        
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """
-    delta_L = state_1.L - state_2.L
-    delta_S = state_1.S - state_2.S
-    delta_MJ = state_1.MJ - state_2.MJ
-    if abs(delta_L) == 1 and \
-       delta_S == 0 and \
-       delta_MJ == 0:
-        MS = np.arange(-state_1.S, state_1.S + 1)
-        ML = state_1.MJ - MS
-        tmp = []
-        for m in ML:
-            tmp.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
-                                            m, state_1.MJ - m, state_1.MJ)) * \
-                       float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
-                                            m, state_2.MJ - m, state_2.MJ)) * \
-                       ang_overlap(state_1.L, state_2.L, m, m, **kwargs))
-        # Stark interaction
-        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    else:
-        return 0.0
-
-def stark_int_alt2(state_1, state_2, **kwargs):
-    """ Stark interaction between two states (alternate version)
-        
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """
-    delta_L = state_2.L - state_1.L
-    delta_S = state_2.S - state_1.S
-    delta_MJ = state_2.MJ - state_1.MJ
-    if abs(delta_L) == 1 and \
-       delta_S == 0 and \
-       delta_MJ == 0:
-        MS = np.arange(-state_1.S, state_1.S + 1)
-        ML = state_1.MJ - MS
-        tmp = []
-        for m in ML:
-            tmp.append((-1)**(state_1.L - state_1.S + state_1.MJ) * (2*state_1.J + 1)**0.5 \
-                       * wigner_3j(state_1.L, state_1.S, state_1.J, m, state_1.MJ - m, -state_1.MJ) * \
-                       (-1)**(state_2.L - state_2.S + state_2.MJ) * (2*state_2.J + 1)**0.5 \
-                       * wigner_3j(state_2.L, state_2.S, state_2.J, m, state_2.MJ - m, -state_2.MJ) *
-                       ang_overlap(state_1.L, state_2.L, m, m, **kwargs))
-        # Stark interaction
-        return np.sum(tmp) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    else:
-        return 0.0
-    
-def ang_overlap(l_1, l_2, m_1, m_2, **kwargs):
-    """ Angular overlap <l_1, m_1| f(theta, phi) |l_2, m_2>.
-        For Stark interaction
-    """
-    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-    dm_allow = kwargs.get('dm_allow', [0])
-    if Efield_vec == [0.0,0.0,1.0]:
-        field_orientation = 'parallel'
-    elif Efield_vec[2] == 0.0:
-        field_orientation = 'perpendicular'
-    else:
-        raise Exception('Arbitrary angles not currently supported. Use either parallel (Efield_vec=[0.0,0.0,1.0]), or perpendicular (Efield_vec[2]=0.0) field.')
-        
-    dl = l_2 - l_1
-    dm = m_2 - m_1
-    l, m = int(l_1), int(m_1)
-    # Electric field aligned to the quantization axis
-    if field_orientation in ['parallel', 'para']:
-        if dm in dm_allow:
-            if dm == 0:
-                if dl == +1:
-                    return +(((l+1)**2-m**2)/((2*l+3)*(2*l+1)))**0.5
-                elif dl == -1:
-                    return +((l**2-m**2)/((2*l+1)*(2*l-1)))**0.5
-            elif dm == +1:
-                if dl == +1:
-                    return -((l+m+2)*(l+m+1)/(2*(2*l+3)*(2*l+1)))**0.5
-                elif dl == -1:
-                    return +((l-m)*(l-m-1)/(2*(2*l+1)*(2*l-1)))**0.5
-            elif dm == -1:
-                if dl == +1:
-                    return +((l-m+2)*(l-m+1)/(2*(2*l+3)*(2*l+1)))**0.5
-                elif dl == -1:
-                    return -((l+m)*(l+m-1)/(2*(2*l+1)*(2*l-1)))**0.5
-    # Electric field perpendicular to the quantization axis          
-    elif field_orientation in ['perpendicular', 'perp', 'crossed', 'orthogonal']:
-        if dm == +1:
-            if dl == +1:
-                return +(0.5*(-1)**(m-2*l)) *  (((l+m+1)*(l+m+2))/((2*l+1)*(2*l+3)))**0.5 
-            elif dl == -1:
-                return -(0.5*(-1)**(-m+2*l)) * (((l-m-1)*(l-m))  /((2*l-1)*(2*l+1)))**0.5
-        elif dm == -1:
-            if dl == +1:
-                return +(0.5*(-1)**(m-2*l)) *  (((l-m+1)*(l-m+2))/((2*l+1)*(2*l+3)))**0.5
-            elif dl == -1:
-                return -(0.5*(-1)**(-m+2*l)) * (((l+m-1)*(l+m))  /((2*l-1)*(2*l+1)))**0.5
+        return np.sum(sum_q) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
     return 0.0
     
 def zeeman_int(state_1, state_2, **kwargs):
     zeeman_method = kwargs.get('zeeman_method', 'hsfs')
-    if zeeman_method == 'psfs':
-        return zeeman_int_psfs(state_1, state_2, **kwargs)
-    elif zeeman_method == 'hsfs':
+    if zeeman_method == 'hsfs':
         return zeeman_int_hsfs(state_1, state_2, **kwargs)
     elif zeeman_method == 'dev':
         return zeeman_int_dev(state_1, state_2, **kwargs)
     else:
         raise Exception('Zeeman int method not recognised')
-    
-def zeeman_int_psfs(state_1, state_2, **kwargs):
-    """ Zeeman interaction between two states,
-    
-        <n' l' S' J' MJ'| H_Zeeman |n l S J MJ>.
-    """
-    delta_S = state_2.S - state_1.S
-    delta_L = state_2.L - state_1.L
-    delta_MJ = state_2.MJ - state_1.MJ
-    if delta_S == 0 and \
-       delta_L == 0 and \
-       delta_MJ == 0:
-        return (-1.0)**(state_1.L + state_1.MJ) * \
-               ((-1.0)**(state_1.S + state_2.S) - 1.0) * \
-               np.sqrt(3.0 * (2*state_2.J + 1) * (2*state_1.J + 1)) * \
-               wigner_3j(state_2.J, 1, state_1.J, -state_2.MJ, 0, state_1.MJ) * \
-               wigner_6j(state_2.S, state_2.L, state_2.J, state_1.J, 1, state_1.S)
-    else:
-        return 0.0
     
 def zeeman_int_hsfs(state_1, state_2, **kwargs):
     """ Zeeman interaction between two states.
@@ -845,15 +668,14 @@ def zeeman_int_hsfs(state_1, state_2, **kwargs):
            S = state_1.S
            g_L2 = g_L * (((2 * L + 1) * L * (L + 1))/6)**0.5
            g_S2 = g_s * (((2 * S + 1) * S * (S + 1))/6)**0.5
-           h_z = (-1)**(1 - MJ) * ((2 * state_1.J + 1) * (2 * state_2.J + 1))**0.5 * \
-                 wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * 6**0.5 * ( \
-                 wigner_6j(L, state_2.J, S, state_1.J, L, S) * \
-                 (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
-                 wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
-                 (-1)**(L + S) * g_S2)
+           return (-1)**(1 - MJ) * ((2 * state_1.J + 1) * (2 * state_2.J + 1))**0.5 * \
+                  wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * 6**0.5 * ( \
+                  wigner_6j(L, state_2.J, S, state_1.J, L, 1) * \
+                  (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
+                  wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
+                  (-1)**(L + S) * g_S2)
     else:
-        h_z = 0.0
-    return h_z
+        return 0.0
 
 def zeeman_int_dev(state_1, state_2, **kwargs):
     """ Zeeman interaction between two states,
@@ -904,6 +726,35 @@ def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
                wigner_6j(0.5, state_1.S, 0.5, state_2.S, 0.5, 1)
     else:
         return 0.0
+    
+def save_matrix(matrix, matrix_type, ham, save_dir):
+    filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
+                'l_max=' + str(ham.l_max) + '_' + \
+                'S=' + str(ham.S) + '_' + \
+                'MJ=' + str(ham.MJ) + '_' + \
+                'MJ_max=' + str(ham.MJ_max)
+    np.save(save_dir+filename, matrix)
+    print('Saved', matrix_type, 'matrix as, ')
+    print('\t', save_dir+filename)
+
+def load_matrix(matrix_type, ham, load_dir):
+    filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
+                'l_max=' + str(ham.l_max) + '_' + \
+                'S=' + str(ham.S) + '_' + \
+                'MJ=' + str(ham.MJ) + '_' + \
+                'MJ_max=' + str(ham.MJ_max) + '.npy'
+    mat = np.load(load_dir+filename)
+    print('Loaded', matrix_type, 'matrix from, ')
+    print('\t', load_dir+filename)
+    return mat
+
+def check_matrix(matrix_type, ham, load_dir):
+    filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
+                'l_max=' + str(ham.l_max) + '_' + \
+                'S=' + str(ham.S) + '_' + \
+                'MJ=' + str(ham.MJ) + '_' + \
+                'MJ_max=' + str(ham.MJ_max) + '.npy'
+    return os.path.isfile(load_dir+filename) 
 
 def constants_info():
     constant_vals = {
