@@ -179,6 +179,13 @@ class Hamiltonian(object):
         """
         arr = self.attrib(attribute)
         return [i for i, x in enumerate(arr) if x == value]
+    
+    def filename(self):
+        return  'n=' + str(self.n_min) + '-' + str(self.n_max) + '_' + \
+                'l_max=' + str(self.l_max) + '_' + \
+                'S=' + str(self.S) + '_' + \
+                'MJ=' + str(self.MJ) + '_' + \
+                'MJ_max=' + str(self.MJ_max)
 
     def h0_matrix(self, **kwargs):
         """ Unperturbed Hamiltonian.
@@ -194,10 +201,9 @@ class Hamiltonian(object):
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._stark_matrix is None or cache is False:
-            load_dir = kwargs.get('matrices_dir', './')
             if kwargs.get('load_matrices', False) and \
-               check_matrix('stark', self, load_dir):
-                self._stark_matrix = load_matrix('stark', self, load_dir)
+               check_matrix('stark', self, **kwargs):
+                self._stark_matrix = load_matrix('stark', self, **kwargs)
             else:
                 self._stark_matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc="calculate Stark terms", **tqdm_kwargs):
@@ -208,9 +214,8 @@ class Hamiltonian(object):
                         self._stark_matrix[j][i] = self._stark_matrix[i][j]
         else:
             print('Using cached Stark matrix') 
-        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False)):
-            save_dir = kwargs.get('matrices_dir', './')
-            save_matrix(self._stark_matrix, 'stark', self, save_dir)
+        if kwargs.get('save_matrices', False):
+            save_matrix(self._stark_matrix, 'stark', self, **kwargs)
         return self._stark_matrix
 
     def zeeman_matrix(self, **kwargs):
@@ -219,10 +224,9 @@ class Hamiltonian(object):
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._zeeman_matrix is None or cache is False:
-            load_dir = kwargs.get('matrices_dir', './')
             if kwargs.get('load_matrices', False) and \
-               check_matrix('zeeman', self, load_dir):
-                self._zeeman_matrix = load_matrix('zeeman', self, load_dir)
+               check_matrix('zeeman', self, **kwargs):
+                self._zeeman_matrix = load_matrix('zeeman', self, **kwargs)
             else:
                 self._zeeman_matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc="calculate Zeeman terms", **tqdm_kwargs):
@@ -233,9 +237,8 @@ class Hamiltonian(object):
                             self._zeeman_matrix[j][i] = self._zeeman_matrix[i][j]
         else:
             print('Using cached Zeeman matrix')
-        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False)):
-            save_dir = kwargs.get('matrices_dir', './')
-            save_matrix(self._zeeman_matrix, 'zeeman', self, save_dir)
+        if kwargs.get('save_matrices', False):
+            save_matrix(self._zeeman_matrix, 'zeeman', self, **kwargs)
         return self._zeeman_matrix
     
     def singlet_triplet_coupling_matrix(self, **kwargs):
@@ -244,10 +247,9 @@ class Hamiltonian(object):
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
         if self._singlet_triplet_coupling_matrix is None or cache is False:
-            load_dir = kwargs.get('matrices_dir', './')
             if kwargs.get('load_matrices', False) and \
-               check_matrix('singlet-triplet', self, load_dir):
-                self._singlet_triplet_coupling_matrix = load_matrix('singlet-triplet', self, load_dir)
+               check_matrix('singlet-triplet', self, **kwargs):
+                self._singlet_triplet_coupling_matrix = load_matrix('singlet-triplet', self, **kwargs)
             else:
                 self._singlet_triplet_coupling_matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc="calculate singlet-triplet coupling terms", **tqdm_kwargs):
@@ -258,9 +260,8 @@ class Hamiltonian(object):
                             self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
         else:
             print('Using cached Singlet-Triplet matrix')
-        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False)):
-            save_dir = kwargs.get('matrices_dir', './')
-            save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, save_dir)
+        if kwargs.get('save_matrices', False):
+            save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, **kwargs)
         return self._singlet_triplet_coupling_matrix
 
     def stark_zeeman(self, Efield, Bfield=0.0, **kwargs):
@@ -727,33 +728,45 @@ def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
     else:
         return 0.0
     
-def save_matrix(matrix, matrix_type, ham, save_dir):
-    filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
-                'l_max=' + str(ham.l_max) + '_' + \
-                'S=' + str(ham.S) + '_' + \
-                'MJ=' + str(ham.MJ) + '_' + \
-                'MJ_max=' + str(ham.MJ_max)
+def save_matrix(matrix, matrix_type, ham, **kwargs):
+    filename = matrix_type + '_' + ham.filename()
+    if matrix_type == 'stark':
+        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
+        if Efield_vec == [0.0,0.0,1.0]:
+            filename += '_parallel'
+        elif Efield_vec[2] == 0.0:
+            filename += '_perpendicular'
+            
+    save_dir = kwargs.get('matrices_dir', './')
     np.savez_compressed(save_dir+filename, matrix=matrix)
     print('Saved', matrix_type, 'matrix as, ')
     print('\t', save_dir+filename)
 
-def load_matrix(matrix_type, ham, load_dir):
-    filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
-                'l_max=' + str(ham.l_max) + '_' + \
-                'S=' + str(ham.S) + '_' + \
-                'MJ=' + str(ham.MJ) + '_' + \
-                'MJ_max=' + str(ham.MJ_max) + '.npz'
+def load_matrix(matrix_type, ham, **kwargs):
+    filename = matrix_type + '_' + ham.filename() + '.npz'
+    if matrix_type == 'stark':
+        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
+        if Efield_vec == [0.0,0.0,1.0]:
+            filename += '_parallel'
+        elif Efield_vec[2] == 0.0:
+            filename += '_perpendicular'
+            
+    load_dir = kwargs.get('matrices_dir', './')
     mat = np.load(load_dir+filename)
     print('Loaded', matrix_type, 'matrix from, ')
     print('\t', load_dir+filename)
     return mat['matrix']
 
-def check_matrix(matrix_type, ham, load_dir):
-    filename = matrix_type + '_n=' + str(ham.n_min) + '-' + str(ham.n_max) + '_' + \
-                'l_max=' + str(ham.l_max) + '_' + \
-                'S=' + str(ham.S) + '_' + \
-                'MJ=' + str(ham.MJ) + '_' + \
-                'MJ_max=' + str(ham.MJ_max) + '.npz'
+def check_matrix(matrix_type, ham, **kwargs):
+    filename = matrix_type + '_' + ham.filename() + '.npz'
+    if matrix_type == 'stark':
+        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
+        if Efield_vec == [0.0,0.0,1.0]:
+            filename += '_parallel'
+        elif Efield_vec[2] == 0.0:
+            filename += '_perpendicular'
+    
+    load_dir = kwargs.get('matrices_dir', './')
     return os.path.isfile(load_dir+filename) 
 
 def constants_info():
