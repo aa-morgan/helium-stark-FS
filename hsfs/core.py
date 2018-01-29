@@ -208,7 +208,7 @@ class Hamiltonian(object):
                         self._stark_matrix[j][i] = self._stark_matrix[i][j]
         else:
             print('Using cached Stark matrix') 
-        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False):
+        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False)):
             save_dir = kwargs.get('matrices_dir', './')
             save_matrix(self._stark_matrix, 'stark', self, save_dir)
         return self._stark_matrix
@@ -258,7 +258,7 @@ class Hamiltonian(object):
                             self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
         else:
             print('Using cached Singlet-Triplet matrix')
-        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False):
+        if kwargs.get('save_matrices', False) and not(kwargs.get('load_matrices', False)):
             save_dir = kwargs.get('matrices_dir', './')
             save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, save_dir)
         return self._singlet_triplet_coupling_matrix
