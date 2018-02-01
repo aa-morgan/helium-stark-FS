@@ -711,17 +711,18 @@ def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
        delta_J == 0 and \
        delta_MJ == 0 and \
        delta_L == 0:
-        L1 = state_1.L
-        L2 = 0.0 # inner electron is 1s state
-        zeta_1 = rad_overlap(state_1.n, L1, state_1.n, L2, p=-3.0)
-        zeta_2 = rad_overlap(state_2.n, L1, state_2.n, L2, p=-3.0)
+        state_1_n1, state_1_n2 = 1, state_1.n
+        state_2_n1, state_2_n2 = 1, state_2.n
+        L1, L2 = 0, state_1.L
+        zeta_1 = rad_overlap(state_1_n1, L1, state_2_n1, L2, p=-3.0)
+        zeta_2 = rad_overlap(state_1_n2, L1, state_2_n2, L2, p=-3.0)
         return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
                    ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
-                    * (2*L1+1) * L1 * (L1+1) * (3/2))**0.5 * \
+                    * (2*L1+1) * L1 * (L1+1) * (3./2))**0.5 * \
                     wigner_6j(L1, state_1.L, L2, state_2.L, L1, 1)) + \
                (zeta_2 * (-1)**(2*state_1.S + state_1.L + state_2.L + state_1.J + L1 + L2 + 1) * \
                    ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
-                    * (2*L2+1) * L2 * (L2+1) * (3/2))**0.5 * \
+                    * (2*L2+1) * L2 * (L2+1) * (3./2))**0.5 * \
                     wigner_6j(L2, state_1.L, L1, state_2.L, L2, 1))) * \
                wigner_6j(state_1.L, state_1.S, state_1.J, state_2.S, state_2.L, 1) * \
                wigner_6j(0.5, state_1.S, 0.5, state_2.S, 0.5, 1)
@@ -743,13 +744,14 @@ def save_matrix(matrix, matrix_type, ham, **kwargs):
     print('\t', save_dir+filename)
 
 def load_matrix(matrix_type, ham, **kwargs):
-    filename = matrix_type + '_' + ham.filename() + '.npz'
+    filename = matrix_type + '_' + ham.filename()
     if matrix_type == 'stark':
         Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
         if Efield_vec == [0.0,0.0,1.0]:
             filename += '_parallel'
         elif Efield_vec[2] == 0.0:
             filename += '_perpendicular'
+    filename += '.npz'
             
     load_dir = kwargs.get('matrices_dir', './')
     mat = np.load(load_dir+filename)
@@ -758,13 +760,14 @@ def load_matrix(matrix_type, ham, **kwargs):
     return mat['matrix']
 
 def check_matrix(matrix_type, ham, **kwargs):
-    filename = matrix_type + '_' + ham.filename() + '.npz'
+    filename = matrix_type + '_' + ham.filename()
     if matrix_type == 'stark':
         Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
         if Efield_vec == [0.0,0.0,1.0]:
             filename += '_parallel'
         elif Efield_vec[2] == 0.0:
             filename += '_perpendicular'
+    filename += '.npz'
     
     load_dir = kwargs.get('matrices_dir', './')
     return os.path.isfile(load_dir+filename) 
