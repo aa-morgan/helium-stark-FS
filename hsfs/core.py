@@ -355,7 +355,7 @@ class Hamiltonian(object):
             field_orientation = 'perpendicular'
         else:
             raise Exception('Arbitrary angles not currently supported. Use either parallel (Efield_vec=[0.0,0.0,1.0]), or perpendicular (Efield_vec[2]=0.0) field.')
-        print('Using field orientation: ' + field_orientation)
+        print('Field orientation: ' + field_orientation)
         
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         get_eig_vec = kwargs.get('eig_vec', False)
@@ -552,7 +552,7 @@ def basis_states(n_min, n_max, **kwargs):
     return basis
 
 def stark_int(state_1, state_2, **kwargs):
-    stark_method = kwargs.get('stark_method', '3j')
+    stark_method = kwargs.get('stark_method', '6j')
     if stark_method == '3j':
         return stark_int_3j(state_1, state_2, **kwargs)
     elif stark_method == '6j':
@@ -645,15 +645,6 @@ def stark_int_6j(state_1, state_2, **kwargs):
     return 0.0
     
 def zeeman_int(state_1, state_2, **kwargs):
-    zeeman_method = kwargs.get('zeeman_method', 'hsfs')
-    if zeeman_method == 'hsfs':
-        return zeeman_int_hsfs(state_1, state_2, **kwargs)
-    elif zeeman_method == 'dev':
-        return zeeman_int_dev(state_1, state_2, **kwargs)
-    else:
-        raise Exception('Zeeman int method not recognised')
-    
-def zeeman_int_hsfs(state_1, state_2, **kwargs):
     """ Zeeman interaction between two states.
     """
     delta_S = state_2.S - state_1.S
@@ -677,27 +668,6 @@ def zeeman_int_hsfs(state_1, state_2, **kwargs):
                   (-1)**(L + S) * g_S2)
     else:
         return 0.0
-
-def zeeman_int_dev(state_1, state_2, **kwargs):
-    """ Zeeman interaction between two states,
-    
-        <n' l' S' J' MJ'| H_Zeeman |n l S J MJ>.
-    """
-    delta_S = state_2.S - state_1.S
-    delta_L = state_2.L - state_1.L
-    delta_MJ = state_2.MJ - state_1.MJ
-    if delta_L == 0 and \
-       delta_MJ == 0:
-        L = state_1.L
-        MJ = state_1.MJ
-        S = state_1.S
-        return  (-1.0)**(state_1.L + state_1.MJ) * \
-                ((-1.0)**(state_1.S + state_2.S) + 1. ) * \
-                (3.0 * (2*state_2.J + 1) * (2*state_1.J + 1))**0.5 * \
-                wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * \
-                wigner_6j(S, L, state_2.J, state_1.J, 1, S)
-    else:
-        return 0.0
     
 def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
     """ Singlet-Triplet interaction between two states.
@@ -714,8 +684,8 @@ def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
         state_1_n1, state_1_n2 = 1, state_1.n
         state_2_n1, state_2_n2 = 1, state_2.n
         L1, L2 = 0, state_1.L
-        zeta_1 = rad_overlap(state_1_n1, L1, state_2_n1, L2, p=-3.0)
-        zeta_2 = rad_overlap(state_1_n2, L1, state_2_n2, L2, p=-3.0)
+        zeta_1 = 0.5 * rad_overlap(state_1_n1, L1, state_2_n1, L2, p=-3.0)
+        zeta_2 = 0.5 * rad_overlap(state_1_n2, L1, state_2_n2, L2, p=-3.0)
         return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
                    ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
                     * (2*L1+1) * L1 * (L1+1) * (3./2))**0.5 * \
