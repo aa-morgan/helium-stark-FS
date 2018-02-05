@@ -42,9 +42,6 @@ Ry_M = Ry * mu_me
 g_L = 1 - m_e / mass_helium_core
 g_s = 2.00231930436182
 
-# Other parameters
-CACHE_DEFAULT = False
-
 @attr.s()
 class State(object):
     """ attrs class to represent the quantum state |n l S J MJ>.
@@ -190,7 +187,7 @@ class Hamiltonian(object):
     def h0_matrix(self, **kwargs):
         """ Unperturbed Hamiltonian.
         """
-        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
+        cache = kwargs.get('cache_matrices', True)
         if self._h0_matrix is None or cache is False:
             self._h0_matrix = np.diag(self.attrib('E0'))
         return self._h0_matrix
@@ -199,7 +196,7 @@ class Hamiltonian(object):
         """ Stark interaction matrix.
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
-        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
+        cache = kwargs.get('cache_matrices', True)
         if self._stark_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
                check_matrix('stark', self, **kwargs):
@@ -222,7 +219,7 @@ class Hamiltonian(object):
         """ Zeeman interaction matrix.
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
-        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
+        cache = kwargs.get('cache_matrices', True)
         if self._zeeman_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
                check_matrix('zeeman', self, **kwargs):
@@ -245,7 +242,7 @@ class Hamiltonian(object):
         """ Singlet-Triplet coupling matrix
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
-        cache = kwargs.get('cache_matrices', CACHE_DEFAULT)
+        cache = kwargs.get('cache_matrices', True)
         if self._singlet_triplet_coupling_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
                check_matrix('singlet-triplet', self, **kwargs):
@@ -372,18 +369,15 @@ class Hamiltonian(object):
             Bz = mu_B * Bfield / En_h
             mat_z =  self.zeeman_matrix(**kwargs)
             H_Z = Bz * mat_z
-            print('H_Z sum: ', np.sum(H_Z))
         else:
             H_Z = 0.0
         # optional singlet_triplet coupling 
         if kwargs.get('singlet_triplet_coupling', False):
             H_spin = self.singlet_triplet_coupling_matrix(**kwargs)
-            print('H_spin sum: ', np.sum(H_spin))
         else:
             H_spin = 0.0
         # loop over electric field values
         mat_s = self.stark_matrix(**kwargs)
-        print('mat_s sum: ', np.sum(mat_s))
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Fz = Efield[i] * e * a_0 / En_h
             H_S = Fz * mat_s / mu_me
