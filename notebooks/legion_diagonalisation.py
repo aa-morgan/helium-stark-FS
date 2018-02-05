@@ -10,7 +10,7 @@ import os
 
 # In[ ]:
 
-#Parameters to set
+#Parameters to set. Make sure there is no space between '=' sign.
 _n_min=4
 _n_max=5
 
@@ -24,8 +24,8 @@ _matrices_dir='./saved_matrices/'
 # In[ ]:
 
 S=None
-print(('n_min={}, n_max={}, S={}').format(_n_min, _n_min, S))
-mat0 = Hamiltonian(n_min=_n_min, n_max=_n_min, S=S)
+print(('n_min={}, n_max={}, S={}').format(_n_min, _n_max, S))
+mat0 = Hamiltonian(n_min=_n_min, n_max=_n_max, S=S)
 print('Number of basis states:', '%d'%mat0.num_states)
 
 s_t_coupling=True
@@ -42,7 +42,7 @@ sm0 = mat0.stark_map(Efield*1e2,
                      singlet_triplet_coupling=s_t_coupling,
                      cache_matrices=False,
                      load_matrices=True,
-                     save_matrices=True,
+                     save_matrices=False,
                      matrices_dir=_matrices_dir,
                      tqdm_disable=False)
 
