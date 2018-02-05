@@ -11,14 +11,14 @@ import os
 # In[ ]:
 
 #Parameters to set
-_n_min = 4
-_n_max = 5
+_n_min=4
+_n_max=5
 
 _Efield_mag=0.0
 _Efield_vec=[1.0,0.0,0.0]
 _Bfield=0.1
 
-_matrices_dir = './saved_matrices/'
+_matrices_dir='./saved_matrices/'
 
 
 # In[ ]:
