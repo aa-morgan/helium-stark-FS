@@ -200,8 +200,10 @@ class Hamiltonian(object):
         if self._stark_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
                check_matrix('stark', self, **kwargs):
+                computed_from_scratch = False
                 self._stark_matrix = load_matrix('stark', self, **kwargs)
             else:
+                computed_from_scratch = True
                 self._stark_matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc="calculate Stark terms", **tqdm_kwargs):
                     # off-diagonal elements only
@@ -210,8 +212,9 @@ class Hamiltonian(object):
                         # assume matrix is symmetric
                         self._stark_matrix[j][i] = self._stark_matrix[i][j]
         else:
-            print('Using cached Stark matrix') 
-        if kwargs.get('save_matrices', False):
+            computed_from_scratch = False
+            print('Using cached Stark matrix')
+        if kwargs.get('save_matrices', False) and computed_from_scratch:
             save_matrix(self._stark_matrix, 'stark', self, **kwargs)
         return self._stark_matrix
 
@@ -223,8 +226,10 @@ class Hamiltonian(object):
         if self._zeeman_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
                check_matrix('zeeman', self, **kwargs):
+                computed_from_scratch = False
                 self._zeeman_matrix = load_matrix('zeeman', self, **kwargs)
             else:
+                computed_from_scratch = True
                 self._zeeman_matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc="calculate Zeeman terms", **tqdm_kwargs):
                     for j in range(i, self.num_states):
@@ -233,8 +238,9 @@ class Hamiltonian(object):
                         if i != j:
                             self._zeeman_matrix[j][i] = self._zeeman_matrix[i][j]
         else:
+            computed_from_scratch = False
             print('Using cached Zeeman matrix')
-        if kwargs.get('save_matrices', False):
+        if kwargs.get('save_matrices', False) and computed_from_scratch:
             save_matrix(self._zeeman_matrix, 'zeeman', self, **kwargs)
         return self._zeeman_matrix
     
@@ -246,8 +252,10 @@ class Hamiltonian(object):
         if self._singlet_triplet_coupling_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
                check_matrix('singlet-triplet', self, **kwargs):
+                computed_from_scratch = False
                 self._singlet_triplet_coupling_matrix = load_matrix('singlet-triplet', self, **kwargs)
             else:
+                computed_from_scratch = True
                 self._singlet_triplet_coupling_matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc="calculate singlet-triplet coupling terms", **tqdm_kwargs):
                     for j in range(i, self.num_states):
@@ -256,8 +264,9 @@ class Hamiltonian(object):
                         if i != j:
                             self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
         else:
+            computed_from_scratch = False
             print('Using cached Singlet-Triplet matrix')
-        if kwargs.get('save_matrices', False):
+        if kwargs.get('save_matrices', False) and computed_from_scratch:
             save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, **kwargs)
         return self._singlet_triplet_coupling_matrix
 
@@ -675,21 +684,22 @@ def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
        delta_J == 0 and \
        delta_MJ == 0 and \
        delta_L == 0:
-        state_1_n1, state_1_n2 = 1, state_1.n
-        state_2_n1, state_2_n2 = 1, state_2.n
-        L1, L2 = 0, state_1.L
-        zeta_1 = 0.5 * rad_overlap(state_1_n1, L1, state_2_n1, L2, p=-3.0)
-        zeta_2 = 0.5 * rad_overlap(state_1_n2, L1, state_2_n2, L2, p=-3.0)
-        return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
-                   ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
-                    * (2*L1+1) * L1 * (L1+1) * (3./2))**0.5 * \
-                    wigner_6j(L1, state_1.L, L2, state_2.L, L1, 1)) + \
-               (zeta_2 * (-1)**(2*state_1.S + state_1.L + state_2.L + state_1.J + L1 + L2 + 1) * \
+        state_1_e1_n, state_1_e2_n = 1, state_1.n
+        state_2_e1_n, state_2_e2_n = 1, state_2.n
+        L1, L2 = 0, state_1.L # Same for both states
+        zeta_1 = 0.5 * rad_overlap(state_1_e1_n, L1, state_2_e1_n, L1, p=-3.0)
+        zeta_2 = 0.5 * rad_overlap(state_1_e2_n, L2, state_2_e2_n, L2, p=-3.0)
+        # First term always zero due to L1=0
+        #return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
+        #           ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
+        #            * (2*L1+1) * L1 * (L1+1) * (3./2))**0.5 * \
+        #            wigner_6j(L1, state_1.L, L2, state_2.L, L1, 1)) + \
+        return (zeta_2 * (-1)**(2*state_1.S + state_1.L + state_2.L + state_1.J + L1 + L2 + 1) * \
                    ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
                     * (2*L2+1) * L2 * (L2+1) * (3./2))**0.5 * \
-                    wigner_6j(L2, state_1.L, L1, state_2.L, L2, 1))) * \
-               wigner_6j(state_1.L, state_1.S, state_1.J, state_2.S, state_2.L, 1) * \
-               wigner_6j(0.5, state_1.S, 0.5, state_2.S, 0.5, 1)
+                    wigner_6j(L2, state_1.L, L1, state_2.L, L2, 1.)) * \
+               wigner_6j(state_1.L, state_1.S, state_1.J, state_2.S, state_2.L, 1.) * \
+               wigner_6j(0.5, state_1.S, 0.5, state_2.S, 0.5, 1.)
     else:
         return 0.0
     
