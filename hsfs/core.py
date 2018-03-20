@@ -13,6 +13,7 @@ from .drake1999 import quantum_defects
 from .numerov import rad_overlap
 import pandas as pd
 import os.path
+import attr
 
 #CODATA 2014, DOI: 10.1103/RevModPhys.88.035009
 c = 299792458.0 ## speed of light in vacuum
@@ -139,6 +140,15 @@ def energy(n, n_eff, Z=1):
                  mu_M**2.0 * ((1 + (5.0/ 6.0) * (Z * alpha)**2.0) / n**2.0))
     return mu_me * en 
 
+@attr.s
+class nLS(object):
+    n = attr.ib()
+    L = attr.ib()
+    S = attr.ib()
+    
+    def __attrs_post_init__(self):
+        self.E = []
+
 class Hamiltonian(object):
     """ The total Hamiltonian matrix.  Each element of the basis set is an
         instance of the class 'State', which represents |n l S J MJ>.
@@ -156,7 +166,8 @@ class Hamiltonian(object):
         self._h0_matrix = None
         self._stark_matrix = None
         self._zeeman_matrix = None
-        self._singlet_triplet_coupling_matrix = None
+        self._spin_orbit_coupling_matrix = None
+        self.spin_orbit_constants = None
       
     def sort_basis(self, attribute, inplace=False):
         """ Sort basis on attribute.
@@ -188,9 +199,36 @@ class Hamiltonian(object):
         """ Unperturbed Hamiltonian.
         """
         cache = kwargs.get('cache_matrices', True)
+        remove_spin_orbit_from_h0 = kwargs.get('remove_spin_orbit_from_h0', False)
         if self._h0_matrix is None or cache is False:
             self._h0_matrix = np.diag(self.attrib('E0'))
+            
+        if remove_spin_orbit_from_h0:
+            return self.h0_matrix_without_spin_orbit()
         return self._h0_matrix
+    
+    def h0_matrix_without_spin_orbit(self, **kwargs):
+        # Aggregate energies for states with same n, L, S. 
+        nLS_arr = []
+        for E, state in zip(np.diag(self.h0_matrix()), self.basis):
+            _nLS = nLS(n=state.n, L=state.L, S=state.S)
+            _nLS_find = next((x for x in nLS_arr if x==_nLS), None)
+            if _nLS_find == None:
+                _nLS.E.append(E)
+                nLS_arr.append(_nLS)
+            else:
+                _nLS_find.E.append(E)
+
+        # Construct h0_matrix_rect with weighted unsplitted energies
+        h0_matrix_without_SO = []
+        for state in self.basis:
+            _nLS = nLS(n=state.n, L=state.L, S=state.S)
+            _nLS_find = next((x for x in nLS_arr if x==_nLS))
+            h0_matrix_without_SO.append(np.mean(_nLS_find.E))
+        return np.diag(h0_matrix_without_SO)
+    
+    def load_spin_orbit_constants(self, filename):
+        self.spin_orbit_constants = np.load(filename)
 
     def stark_matrix(self, **kwargs):
         """ Stark interaction matrix.
@@ -244,31 +282,53 @@ class Hamiltonian(object):
             save_matrix(self._zeeman_matrix, 'zeeman', self, **kwargs)
         return self._zeeman_matrix
     
-    def singlet_triplet_coupling_matrix(self, **kwargs):
-        """ Singlet-Triplet coupling matrix
+    def spin_orbit_coupling_matrix(self, **kwargs):
+        """ Spin-orbit coupling matrix
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         cache = kwargs.get('cache_matrices', True)
-        if self._singlet_triplet_coupling_matrix is None or cache is False:
+        if self._spin_orbit_coupling_matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
-               check_matrix('singlet-triplet', self, **kwargs):
+               check_matrix('spin-orbit', self, **kwargs):
                 computed_from_scratch = False
-                self._singlet_triplet_coupling_matrix = load_matrix('singlet-triplet', self, **kwargs)
+                self._spin_orbit_coupling_matrix = load_matrix('spin-orbit', self, **kwargs)
             else:
                 computed_from_scratch = True
-                self._singlet_triplet_coupling_matrix = np.zeros([self.num_states, self.num_states])
-                for i in trange(self.num_states, desc="calculate singlet-triplet coupling terms", **tqdm_kwargs):
-                    for j in range(i, self.num_states):
-                        self._singlet_triplet_coupling_matrix[i][j] = singlet_triplet_coupling_int(self.basis[i], self.basis[j], **kwargs)
+                self._spin_orbit_coupling_matrix = np.zeros([self.num_states, self.num_states])
+                for i in trange(self.num_states, desc="calculate spin-orbit coupling terms", **tqdm_kwargs):
+                    for j in range(i, self.num_states):  
+                        # Get the spin-orbit constants. Zero unless delta_n = delta_L = 0, and L in [1,2,3]
+                        n_1, n_2 = self.basis[i].n, self.basis[j].n
+                        L_1, L_2 = self.basis[i].L, self.basis[j].L
+                        if (n_1==n_2) and (L_1==L_2) and (L_1 in [1,2,3]):
+                            # shape (2,3,100) ([diag, off-diag], [L=1,2,3], [n=1-100])
+                            spin_orbit_constants = self.spin_orbit_constants[:,L_1-1,n_1-1]
+                            # If diagonal element then use A_diag, otherwise use A_off_diag
+                            if self.basis[i]==self.basis[j]:
+                                tmp = kwargs.get('overwrite_A_diag', None)
+                                if tmp == None:
+                                    spin_orbit_constant = spin_orbit_constants[0]
+                                else:
+                                    spin_orbit_constant = tmp
+                            else:
+                                tmp = kwargs.get('overwrite_A_off_diag', None)
+                                if tmp == None:
+                                    spin_orbit_constant = spin_orbit_constants[1]
+                                else:
+                                    spin_orbit_constant = tmp
+                        else:
+                            spin_orbit_constant = 0.0
+                        self._spin_orbit_coupling_matrix[i][j] = spin_orbit_coupling_int(
+                            self.basis[i], self.basis[j], constant=spin_orbit_constant, **kwargs)
                         # assume matrix is symmetric
                         if i != j:
-                            self._singlet_triplet_coupling_matrix[j][i] = self._singlet_triplet_coupling_matrix[i][j]
+                            self._spin_orbit_coupling_matrix[j][i] = self._spin_orbit_coupling_matrix[i][j]
         else:
             computed_from_scratch = False
-            print('Using cached Singlet-Triplet matrix')
+            print('Using cached Spin-Orbit matrix')
         if kwargs.get('save_matrices', False) and computed_from_scratch:
-            save_matrix(self._singlet_triplet_coupling_matrix, 'singlet-triplet', self, **kwargs)
-        return self._singlet_triplet_coupling_matrix
+            save_matrix(self._spin_orbit_coupling_matrix, 'spin-orbit', self, **kwargs)
+        return self._spin_orbit_coupling_matrix
 
     def stark_zeeman(self, Efield, Bfield=0.0, **kwargs):
         """ Diagonalise the total Hamiltonian, H_0 + H_S + H_Z, for parallel 
@@ -380,18 +440,20 @@ class Hamiltonian(object):
             H_Z = Bz * mat_z
         else:
             H_Z = 0.0
-        # optional singlet_triplet coupling 
-        if kwargs.get('singlet_triplet_coupling', False):
-            H_spin = self.singlet_triplet_coupling_matrix(**kwargs)
+        # optional spin-orbit coupling 
+        if kwargs.get('spin_orbit_coupling', False):
+            filename = kwargs.get('spin_orbit_constants_filename', None)
+            self.load_spin_orbit_constants(filename)
+            H_so = self.spin_orbit_coupling_matrix(**kwargs)
         else:
-            H_spin = 0.0
+            H_so = 0.0
         # loop over electric field values
         mat_s = self.stark_matrix(**kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Fz = Efield[i] * e * a_0 / En_h
             H_S = Fz * mat_s / mu_me
             # Full interaction matrix. Unused terms are set to 0.0
-            H_int = H_S + H_Z + H_spin
+            H_int = H_S + H_Z + H_so
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
@@ -451,19 +513,19 @@ class Hamiltonian(object):
             H_S = Fz * mat_s / mu_me
         else:
             H_S = 0.0
-        # optional singlet_triplet coupling 
-        if 'singlet_triplet_coupling' in kwargs:
-            print('Using Singlet-Triplet coupling')
-            H_spin = self.singlet_triplet_coupling_matrix(**kwargs)
+        # optional spin-orbit coupling 
+        if 'spin_orbit_coupling' in kwargs:
+            print('Using spin-orbit coupling')
+            H_so = self.spin_orbit_coupling_matrix(**kwargs)
         else:
-            H_spin = 0.0
+            H_so = 0.0
         # loop over magnetic field values
         mat_z = self.zeeman_matrix(**kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Bz = mu_B * Bfield[i] / En_h
             H_Z =  Bz * mat_z
             # Full interaction matrix. Unused terms are set to 0.0
-            H_int = H_S + H_Z + H_spin
+            H_int = H_S + H_Z + H_so
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
@@ -628,6 +690,10 @@ def stark_int_6j(state_1, state_2, **kwargs):
     elif Efield_vec[2] == 0.0: # perpendicular fields
         q_arr   = [1,-1]
         tau_arr = [(1./2)**0.5, -(1./2)**0.5]
+    elif Efield_vec == [1.0,1.0,1.0]:
+        print('Using Efield_vec == [1.0,1.0,1.0]')
+        q_arr   = [1,0,-1]
+        tau_arr = [(1./2)**0.5, 1, -(1./2)**0.5]
     
     delta_L = state_1.L - state_2.L
     delta_S = state_1.S - state_2.S
@@ -672,23 +738,23 @@ def zeeman_int(state_1, state_2, **kwargs):
     else:
         return 0.0
     
-def singlet_triplet_coupling_int(state_1, state_2, **kwargs):
-    """ Singlet-Triplet interaction between two states.
+def spin_orbit_coupling_int(state_1, state_2, constant, **kwargs):
+    """ Spin-orbit interaction between two states.
         Angular momentum: Understanding spatial aspects in Chemistry and Physics - Richard N. Zare. Eqn. 5.79
     """
     delta_S = state_2.S - state_1.S
     delta_L = state_2.L - state_1.L
     delta_J = state_2.J - state_1.J
     delta_MJ = state_2.MJ - state_1.MJ
-    if abs(delta_S) == 1 and \
-       delta_J == 0 and \
+    if delta_J  == 0 and \
        delta_MJ == 0 and \
-       delta_L == 0:
+       delta_L  == 0:
         state_1_e1_n, state_1_e2_n = 1, state_1.n
         state_2_e1_n, state_2_e2_n = 1, state_2.n
-        L1, L2 = 0, state_1.L # Same for both states
-        zeta_1 = 0.5 * rad_overlap(state_1_e1_n, L1, state_2_e1_n, L1, p=-3.0)
-        zeta_2 = 0.5 * rad_overlap(state_1_e2_n, L2, state_2_e2_n, L2, p=-3.0)
+        L1, L2 = 0, state_1.L # Same for both states, because of delta_L==0
+        #zeta_1 = 0.5 * rad_overlap(state_1_e1_n, L1, state_2_e1_n, L1, p=-3.0)
+        #zeta_2 = 0.5 * rad_overlap(state_1_e2_n, L2, state_2_e2_n, L2, p=-3.0)
+        zeta_2 = constant
         # First term always zero due to L1=0
         #return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
         #           ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
