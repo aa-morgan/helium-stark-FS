@@ -229,6 +229,12 @@ class Hamiltonian(object):
     
     def load_spin_orbit_constants(self, filename):
         self.spin_orbit_constants = np.load(filename)
+        
+    def get_spin_orbit_constants(self, **kwargs):
+        if self.spin_orbit_constants is None:
+            filename = kwargs.get('spin_orbit_constants_filename', None)
+            self.load_spin_orbit_constants(filename)
+        return self.spin_orbit_constants
 
     def stark_matrix(self, **kwargs):
         """ Stark interaction matrix.
@@ -304,7 +310,7 @@ class Hamiltonian(object):
                         SO_offset = 0.0
                         if (n_1==n_2) and (L_1==L_2) and (L_1 in [1,2,3]):
                             # shape (2,3,100) ([diag, off-diag], [L=1,2,3], [n=1-100])
-                            spin_orbit_constants = self.spin_orbit_constants[:,L_1-1,n_1-1]
+                            spin_orbit_constants = self.get_spin_orbit_constants(**kwargs)[:,L_1-1,n_1-1]
                             # If diagonal element then use A_diag, otherwise use A_off_diag
                             if self.basis[i]==self.basis[j]:
                                 tmp = kwargs.get('overwrite_A_diag', None)
@@ -451,8 +457,6 @@ class Hamiltonian(object):
             H_Z = 0.0
         # optional spin-orbit coupling 
         if kwargs.get('spin_orbit_coupling', False):
-            filename = kwargs.get('spin_orbit_constants_filename', None)
-            self.load_spin_orbit_constants(filename)
             H_so = self.spin_orbit_coupling_matrix(**kwargs)
         else:
             H_so = 0.0

@@ -39,7 +39,7 @@ sm0 = mat0.stark_map(Efield*1e2, Bfield=_Bfield,
                      cache_matrices=False,
                      load_matrices=True,
                      save_matrices=False,
-                     matrices_dir='./saved_matrices/',
+                     matrices_dir=_matrices_dir,
                      tqdm_disable=False)
 
 # Save Stark Map
