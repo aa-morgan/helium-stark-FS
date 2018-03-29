@@ -300,6 +300,8 @@ class Hamiltonian(object):
                         # Get the spin-orbit constants. Zero unless delta_n = delta_L = 0, and L in [1,2,3]
                         n_1, n_2 = self.basis[i].n, self.basis[j].n
                         L_1, L_2 = self.basis[i].L, self.basis[j].L
+                        # Offset parameter due to the Spin-Orbit extraction process
+                        SO_offset = 0.0
                         if (n_1==n_2) and (L_1==L_2) and (L_1 in [1,2,3]):
                             # shape (2,3,100) ([diag, off-diag], [L=1,2,3], [n=1-100])
                             spin_orbit_constants = self.spin_orbit_constants[:,L_1-1,n_1-1]
@@ -310,6 +312,12 @@ class Hamiltonian(object):
                                     spin_orbit_constant = spin_orbit_constants[0]
                                 else:
                                     spin_orbit_constant = tmp
+                                    
+                                tmp = kwargs.get('overwrite_SO_offset', None)
+                                if tmp == None:
+                                    SO_offset = spin_orbit_constants[2]
+                                else:
+                                    SO_offset = tmp
                             else:
                                 tmp = kwargs.get('overwrite_A_off_diag', None)
                                 if tmp == None:
@@ -319,7 +327,8 @@ class Hamiltonian(object):
                         else:
                             spin_orbit_constant = 0.0
                         self._spin_orbit_coupling_matrix[i][j] = spin_orbit_coupling_int(
-                            self.basis[i], self.basis[j], constant=spin_orbit_constant, **kwargs)
+                            self.basis[i], self.basis[j], constant=spin_orbit_constant, **kwargs) +\
+                            SO_offset
                         # assume matrix is symmetric
                         if i != j:
                             self._spin_orbit_coupling_matrix[j][i] = self._spin_orbit_coupling_matrix[i][j]
@@ -405,11 +414,11 @@ class Hamiltonian(object):
                                  returns the eigenvalues and eigenvectors for 
                                  every field value.
 
-                eig_amp=None     dtype: list
+                eig_vec_elements=None     dtype: list
 
                                  calculate the sum of the square of the amplitudes
                                  of the components of the listed basis states for 
-                                 each eigenvector, e.g., eig_amp=[1, 3, 5].
+                                 each eigenvector, e.g., eig_vec_elements=[1, 3, 5].
                                  Requires eig_vec=False.
 
             Nb. A large map with eignvectors can take up a LOT of memory.
@@ -425,14 +434,14 @@ class Hamiltonian(object):
         
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         get_eig_vec = kwargs.get('eig_vec', False)
-        eig_elements = kwargs.get('eig_amp', None)
+        eig_vec_idx = kwargs.get('eig_vec_elements', None)
         num_fields = len(Efield)
         # initialise output arrays
         eig_val = np.empty((num_fields, self.num_states), dtype=float)
         if get_eig_vec:
             eig_vec = np.empty((num_fields, self.num_states, self.num_states), dtype=float)
-        elif eig_elements is not None:
-            eig_amp = np.empty((num_fields, self.num_states), dtype=float)
+        elif eig_vec_idx is not None:
+            eig_vec_elements = np.empty((num_fields, self.num_states), dtype=float)
         # optional magnetic field
         if Bfield != 0.0:
             Bz = mu_B * Bfield / En_h
@@ -458,18 +467,18 @@ class Hamiltonian(object):
             if get_eig_vec:
                 # eigenvalues and eigenvectors
                 eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-            elif eig_elements is not None:
-                # eigenvalues and partial eigenvector amplitudes
+            elif eig_vec_idx is not None:
+                # eigenvalues and partial eigenvector
                 eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-                eig_amp[i] = np.sum(vec[eig_elements]**2.0, axis=0)            
+                eig_vec_elements[i] = np.sum(vec[eig_vec_idx], axis=0)            
             else:
                 # eigenvalues
                 eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
         # output
         if get_eig_vec:
             return eig_val * En_h, eig_vec
-        elif eig_elements is not None:
-            return eig_val * En_h, eig_amp
+        elif eig_vec_idx is not None:
+            return eig_val * En_h, eig_vec_elements
         else:
             return eig_val * En_h
 

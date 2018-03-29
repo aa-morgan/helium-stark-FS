@@ -1,14 +1,9 @@
 
 # coding: utf-8
 
-# In[ ]:
-
 from hsfs import Hamiltonian
 import numpy as np
 import os
-
-
-# In[ ]:
 
 #Parameters to set. Make sure there is no space between '=' sign.
 _n_min=4
@@ -20,34 +15,32 @@ _Bfield=0.1
 
 _matrices_dir='./saved_matrices/'
 
-
-# In[ ]:
-
 S=None
 print(('n_min={}, n_max={}, S={}').format(_n_min, _n_max, S))
 mat0 = Hamiltonian(n_min=_n_min, n_max=_n_max, S=S)
 print('Number of basis states:', '%d'%mat0.num_states)
 
-s_t_coupling=True
+use_spin_orbit=True
 if _Efield_vec == [0.0,0.0,1.0]:
     field_orientation = 'para'
 elif _Efield_vec[2] == 0.0:
     field_orientation = 'perp'
 
 Efield = np.linspace(_Efield_mag, _Efield_mag, 1) # V /cm
-print('E_mag={}, E_vec={}, B={},S-T={}'.format(_Efield_mag,_Efield_vec,_Bfield,s_t_coupling))
-sm0 = mat0.stark_map(Efield*1e2,  
-                     Efield_vec=_Efield_vec,
-                     Bfield=_Bfield,
-                     singlet_triplet_coupling=s_t_coupling,
+print('E_mag={}, E_vec={}, B={},S-T={}'.format(_Efield_mag,_Efield_vec,_Bfield,use_spin_orbit))
+sm0 = mat0.stark_map(Efield*1e2, Bfield=_Bfield, 
+                     Efield_vec=_Efield_vec, 
+                     spin_orbit_coupling=use_spin_orbit,
+                     spin_orbit_constants_filename='spin-orbit-constants-values.npy',
+                     remove_spin_orbit_from_h0=use_spin_orbit,
+                     overwrite_A_diag = None,
+                     overwrite_A_off_diag = None,
+                     overwrite_SO_offset = None,
                      cache_matrices=False,
                      load_matrices=True,
                      save_matrices=False,
-                     matrices_dir=_matrices_dir,
+                     matrices_dir='./saved_matrices/',
                      tqdm_disable=False)
-
-
-# In[ ]:
 
 # Save Stark Map
 filename_ham = mat0.filename()
@@ -57,9 +50,3 @@ directory = _matrices_dir
 filepath = os.path.join(directory, filename_full)
 print('Filepath={}.npz'.format(filepath))
 np.savez_compressed(filepath, matrix=sm0)
-
-
-# In[ ]:
-
-
-
