@@ -166,8 +166,6 @@ class Hamiltonian(object):
         self._h0_matrix = None
         self._stark_matrix = None
         self._zeeman_matrix = None
-        self._spin_orbit_coupling_matrix = None
-        self.spin_orbit_constants = None
       
     def sort_basis(self, attribute, inplace=False):
         """ Sort basis on attribute.
@@ -199,42 +197,9 @@ class Hamiltonian(object):
         """ Unperturbed Hamiltonian.
         """
         cache = kwargs.get('cache_matrices', True)
-        remove_spin_orbit_from_h0 = kwargs.get('remove_spin_orbit_from_h0', False)
         if self._h0_matrix is None or cache is False:
             self._h0_matrix = np.diag(self.attrib('E0'))
-            
-        if remove_spin_orbit_from_h0:
-            return self.h0_matrix_without_spin_orbit()
         return self._h0_matrix
-    
-    def h0_matrix_without_spin_orbit(self, **kwargs):
-        # Aggregate energies for states with same n, L, S. 
-        nLS_arr = []
-        for E, state in zip(np.diag(self.h0_matrix()), self.basis):
-            _nLS = nLS(n=state.n, L=state.L, S=state.S)
-            _nLS_find = next((x for x in nLS_arr if x==_nLS), None)
-            if _nLS_find == None:
-                _nLS.E.append(E)
-                nLS_arr.append(_nLS)
-            else:
-                _nLS_find.E.append(E)
-
-        # Construct h0_matrix_rect with weighted unsplitted energies
-        h0_matrix_without_SO = []
-        for state in self.basis:
-            _nLS = nLS(n=state.n, L=state.L, S=state.S)
-            _nLS_find = next((x for x in nLS_arr if x==_nLS))
-            h0_matrix_without_SO.append(np.mean(_nLS_find.E))
-        return np.diag(h0_matrix_without_SO)
-    
-    def load_spin_orbit_constants(self, filename):
-        self.spin_orbit_constants = np.load(filename)
-        
-    def get_spin_orbit_constants(self, **kwargs):
-        if self.spin_orbit_constants is None:
-            filename = kwargs.get('spin_orbit_constants_filename', None)
-            self.load_spin_orbit_constants(filename)
-        return self.spin_orbit_constants
 
     def stark_matrix(self, **kwargs):
         """ Stark interaction matrix.
@@ -287,63 +252,6 @@ class Hamiltonian(object):
         if kwargs.get('save_matrices', False) and computed_from_scratch:
             save_matrix(self._zeeman_matrix, 'zeeman', self, **kwargs)
         return self._zeeman_matrix
-    
-    def spin_orbit_coupling_matrix(self, **kwargs):
-        """ Spin-orbit coupling matrix
-        """
-        tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
-        cache = kwargs.get('cache_matrices', True)
-        if self._spin_orbit_coupling_matrix is None or cache is False:
-            if kwargs.get('load_matrices', False) and \
-               check_matrix('spin-orbit', self, **kwargs):
-                computed_from_scratch = False
-                self._spin_orbit_coupling_matrix = load_matrix('spin-orbit', self, **kwargs)
-            else:
-                computed_from_scratch = True
-                self._spin_orbit_coupling_matrix = np.zeros([self.num_states, self.num_states])
-                for i in trange(self.num_states, desc="calculate spin-orbit coupling terms", **tqdm_kwargs):
-                    for j in range(i, self.num_states):  
-                        # Get the spin-orbit constants. Zero unless delta_n = delta_L = 0, and L in [1,2,3]
-                        n_1, n_2 = self.basis[i].n, self.basis[j].n
-                        L_1, L_2 = self.basis[i].L, self.basis[j].L
-                        # Offset parameter due to the Spin-Orbit extraction process
-                        SO_offset = 0.0
-                        if (n_1==n_2) and (L_1==L_2) and (L_1 in [1,2,3]):
-                            # shape (2,3,100) ([diag, off-diag], [L=1,2,3], [n=1-100])
-                            spin_orbit_constants = self.get_spin_orbit_constants(**kwargs)[:,L_1-1,n_1-1]
-                            # If diagonal element then use A_diag, otherwise use A_off_diag
-                            if self.basis[i]==self.basis[j]:
-                                tmp = kwargs.get('overwrite_A_diag', None)
-                                if tmp == None:
-                                    spin_orbit_constant = spin_orbit_constants[0]
-                                else:
-                                    spin_orbit_constant = tmp
-                                    
-                                tmp = kwargs.get('overwrite_SO_offset', None)
-                                if tmp == None:
-                                    SO_offset = spin_orbit_constants[2]
-                                else:
-                                    SO_offset = tmp
-                            else:
-                                tmp = kwargs.get('overwrite_A_off_diag', None)
-                                if tmp == None:
-                                    spin_orbit_constant = spin_orbit_constants[1]
-                                else:
-                                    spin_orbit_constant = tmp
-                        else:
-                            spin_orbit_constant = 0.0
-                        self._spin_orbit_coupling_matrix[i][j] = spin_orbit_coupling_int(
-                            self.basis[i], self.basis[j], constant=spin_orbit_constant, **kwargs) +\
-                            SO_offset
-                        # assume matrix is symmetric
-                        if i != j:
-                            self._spin_orbit_coupling_matrix[j][i] = self._spin_orbit_coupling_matrix[i][j]
-        else:
-            computed_from_scratch = False
-            print('Using cached Spin-Orbit matrix')
-        if kwargs.get('save_matrices', False) and computed_from_scratch:
-            save_matrix(self._spin_orbit_coupling_matrix, 'spin-orbit', self, **kwargs)
-        return self._spin_orbit_coupling_matrix
 
     def stark_zeeman(self, Efield, Bfield=0.0, **kwargs):
         """ Diagonalise the total Hamiltonian, H_0 + H_S + H_Z, for parallel 
@@ -455,18 +363,13 @@ class Hamiltonian(object):
             H_Z = Bz * mat_z
         else:
             H_Z = 0.0
-        # optional spin-orbit coupling 
-        if kwargs.get('spin_orbit_coupling', False):
-            H_so = self.spin_orbit_coupling_matrix(**kwargs)
-        else:
-            H_so = 0.0
         # loop over electric field values
         mat_s = self.stark_matrix(**kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Fz = Efield[i] * e * a_0 / En_h
             H_S = Fz * mat_s / mu_me
             # Full interaction matrix. Unused terms are set to 0.0
-            H_int = H_S + H_Z + H_so
+            H_int = H_S + H_Z
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
@@ -526,19 +429,13 @@ class Hamiltonian(object):
             H_S = Fz * mat_s / mu_me
         else:
             H_S = 0.0
-        # optional spin-orbit coupling 
-        if 'spin_orbit_coupling' in kwargs:
-            print('Using spin-orbit coupling')
-            H_so = self.spin_orbit_coupling_matrix(**kwargs)
-        else:
-            H_so = 0.0
         # loop over magnetic field values
         mat_z = self.zeeman_matrix(**kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Bz = mu_B * Bfield[i] / En_h
             H_Z =  Bz * mat_z
             # Full interaction matrix. Unused terms are set to 0.0
-            H_int = H_S + H_Z + H_so
+            H_int = H_S + H_Z
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
@@ -737,48 +634,17 @@ def zeeman_int(state_1, state_2, **kwargs):
        delta_J in [-1, 0, 1] and \
        delta_S == 0 and \
        delta_L == 0:
-           L = state_1.L
-           MJ = state_1.MJ
-           S = state_1.S
-           g_L2 = g_L * (((2 * L + 1) * L * (L + 1))/6)**0.5
-           g_S2 = g_s * (((2 * S + 1) * S * (S + 1))/6)**0.5
-           return (-1)**(1 - MJ) * ((2 * state_1.J + 1) * (2 * state_2.J + 1))**0.5 * \
-                  wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * 6**0.5 * ( \
-                  wigner_6j(L, state_2.J, S, state_1.J, L, 1) * \
-                  (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
-                  wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
-                  (-1)**(L + S) * g_S2)
-    else:
-        return 0.0
-    
-def spin_orbit_coupling_int(state_1, state_2, constant, **kwargs):
-    """ Spin-orbit interaction between two states.
-        Angular momentum: Understanding spatial aspects in Chemistry and Physics - Richard N. Zare. Eqn. 5.79
-    """
-    delta_S = state_2.S - state_1.S
-    delta_L = state_2.L - state_1.L
-    delta_J = state_2.J - state_1.J
-    delta_MJ = state_2.MJ - state_1.MJ
-    if delta_J  == 0 and \
-       delta_MJ == 0 and \
-       delta_L  == 0:
-        state_1_e1_n, state_1_e2_n = 1, state_1.n
-        state_2_e1_n, state_2_e2_n = 1, state_2.n
-        L1, L2 = 0, state_1.L # Same for both states, because of delta_L==0
-        #zeta_1 = 0.5 * rad_overlap(state_1_e1_n, L1, state_2_e1_n, L1, p=-3.0)
-        #zeta_2 = 0.5 * rad_overlap(state_1_e2_n, L2, state_2_e2_n, L2, p=-3.0)
-        zeta_2 = constant
-        # First term always zero due to L1=0
-        #return ((zeta_1 * (-1)**(state_1.S + state_2.S + state_1.J + L1 + L2 + 1) * \
-        #           ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
-        #            * (2*L1+1) * L1 * (L1+1) * (3./2))**0.5 * \
-        #            wigner_6j(L1, state_1.L, L2, state_2.L, L1, 1)) + \
-        return (zeta_2 * (-1)**(2*state_1.S + state_1.L + state_2.L + state_1.J + L1 + L2 + 1) * \
-                   ((2*state_2.L+1) * (2*state_1.L+1) * (2*state_2.S+1) * (2*state_1.S+1) \
-                    * (2*L2+1) * L2 * (L2+1) * (3./2))**0.5 * \
-                    wigner_6j(L2, state_1.L, L1, state_2.L, L2, 1.)) * \
-               wigner_6j(state_1.L, state_1.S, state_1.J, state_2.S, state_2.L, 1.) * \
-               wigner_6j(0.5, state_1.S, 0.5, state_2.S, 0.5, 1.)
+        L = state_1.L
+        MJ = state_1.MJ
+        S = state_1.S
+        g_L2 = g_L * (((2 * L + 1) * L * (L + 1))/6)**0.5
+        g_S2 = g_s * (((2 * S + 1) * S * (S + 1))/6)**0.5
+        return (-1)**(1 - MJ) * ((2 * state_1.J + 1) * (2 * state_2.J + 1))**0.5 * \
+            wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * 6**0.5 * ( \
+            wigner_6j(L, state_2.J, S, state_1.J, L, 1) * \
+            (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
+            wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
+            (-1)**(L + S) * g_S2)
     else:
         return 0.0
     
