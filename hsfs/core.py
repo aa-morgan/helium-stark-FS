@@ -2,18 +2,16 @@
 """
 Created on Tue Sep 26 12:22:19 2017
 
-@author: Adam
+@author: Adam Deller, UNIVERSITY COLLEGE LONDON.
+Editted by: Alex Morgan, UNIVERSITY COLLEGE LONDON.
 """
 from operator import attrgetter
 import attr
 import numpy as np
 from tqdm import trange
-from sympy.physics.wigner import clebsch_gordan, wigner_3j, wigner_6j
 from .drake1999 import quantum_defects
-from .numerov import rad_overlap
 import pandas as pd
-import os.path
-import attr
+from .interaction_matrix import interaction_matrix
 
 #CODATA 2014, DOI: 10.1103/RevModPhys.88.035009
 c = 299792458.0 ## speed of light in vacuum
@@ -39,9 +37,34 @@ mu_me = mass_helium_core / (mass_helium_core + m_e)
 mu_M = m_e / (mass_helium_core + m_e)
 ## Rydberg constant for helium
 Ry_M = Ry * mu_me
-## g-factors
-g_L = 1 - m_e / mass_helium_core
-g_s = 2.00231930436182
+
+class Basis(object):
+    """ Class to represent the a basis of States.
+    """
+    @attr.s()
+    class Params(object):
+        """ attrs class to represent the basis parameters.
+        """
+        n_min = attr.ib(converter=int)
+        @n_min.validator
+        def check_n_min(self, attribute, value):
+            if not value > 0:
+                raise ValueError("n_min must be a positive integer.")
+                
+        n_max = attr.ib(converter=int)
+        @n_max.validator
+        def check_n_max(self, attribute, value):
+            if not value >= self.n_min:
+                raise ValueError("n_max must be larger than or equal to n_min.")
+  
+        S = attr.ib(default=None)
+        L_max = attr.ib(default=None)
+        MJ = attr.ib(default=None)        
+        MJ_max = attr.ib(default=None)
+        
+    def __init__(self, states, n_min, n_max, S, L_max=None, MJ=None, MJ_max=None):
+        self.states = states
+        self.params = self.Params(n_min, n_max, S, L_max, MJ, MJ_max)
 
 @attr.s()
 class State(object):
@@ -95,7 +118,7 @@ class State(object):
     def tex(self, show_MJ=True):
         """ Tex string of the form n^{2S + 1}L_{J} (M_J = {MJ})
         """
-        L = 'SPDFGHIKLMNOQRTUVWXYZ'[int(self.l%22)]
+        L = 'SPDFGHIKLMNOQRTUVWXYZ'[int(self.L%22)]
         tex_str = r'$%d^{%d}'%(self.n, 2*self.S + 1) + L + r'_{%d}'%(self.J)
         if show_MJ:
             tex_str = tex_str + '\,' + r'(M_J = %d)$'%self.MJ
@@ -151,18 +174,18 @@ class nLS(object):
 
 class Hamiltonian(object):
     """ The total Hamiltonian matrix.  Each element of the basis set is an
-        instance of the class 'State', which represents |n l S J MJ>.
+        instance of the class 'State', which represents |n L S J MJ>.
     """
-    def __init__(self, n_min, n_max, l_max=None, S=None, MJ=None, MJ_max=None):
+    def __init__(self, n_min, n_max, L_max=None, S=None, MJ=None, MJ_max=None):
         self.n_min = n_min
         self.n_max = n_max
-        self.l_max = l_max
+        self.L_max = L_max
         self.S = S
         self.MJ = MJ
         self.MJ_max = MJ_max
-        self.basis = basis_states(n_min, n_max, l_max=l_max, S=S, MJ=MJ, MJ_max=MJ_max)
+        self.basis = basis_states(n_min, n_max, L_max=L_max, S=S, MJ=MJ, MJ_max=MJ_max)
         self.sort_basis('E0', inplace=True)
-        self.num_states = len(self.basis)
+        self.num_states = len(self.basis.states)
         self._h0_matrix = None
         self._stark_matrix = None
         self._zeeman_matrix = None
@@ -170,15 +193,15 @@ class Hamiltonian(object):
     def sort_basis(self, attribute, inplace=False):
         """ Sort basis on attribute.
         """
-        sorted_basis = sorted(self.basis, key=attrgetter(attribute))
+        sorted_basis = sorted(self.basis.states, key=attrgetter(attribute))
         if inplace:
-            self.basis = sorted_basis
+            self.basis.states = sorted_basis
         return sorted_basis
 
     def attrib(self, attribute):
         """ List of given attribute values from all elements in the basis, e.g., J or E0.
         """
-        return [getattr(el, attribute) for el in self.basis]
+        return [getattr(el, attribute) for el in self.basis.states]
 
     def where(self, attribute, value):
         """ Indexes of where basis.attribute == value.
@@ -188,7 +211,7 @@ class Hamiltonian(object):
     
     def filename(self):
         return  'n=' + str(self.n_min) + '-' + str(self.n_max) + '_' + \
-                'l_max=' + str(self.l_max) + '_' + \
+                'L_max=' + str(self.L_max) + '_' + \
                 'S=' + str(self.S) + '_' + \
                 'MJ=' + str(self.MJ) + '_' + \
                 'MJ_max=' + str(self.MJ_max)
@@ -200,114 +223,6 @@ class Hamiltonian(object):
         if self._h0_matrix is None or cache is False:
             self._h0_matrix = np.diag(self.attrib('E0'))
         return self._h0_matrix
-
-    def stark_matrix(self, **kwargs):
-        """ Stark interaction matrix.
-        """
-        tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
-        cache = kwargs.get('cache_matrices', True)
-        if self._stark_matrix is None or cache is False:
-            if kwargs.get('load_matrices', False) and \
-               check_matrix('stark', self, **kwargs):
-                computed_from_scratch = False
-                self._stark_matrix = load_matrix('stark', self, **kwargs)
-            else:
-                computed_from_scratch = True
-                self._stark_matrix = np.zeros([self.num_states, self.num_states])
-                for i in trange(self.num_states, desc="calculate Stark terms", **tqdm_kwargs):
-                    # off-diagonal elements only
-                    for j in range(i + 1, self.num_states):
-                        self._stark_matrix[i][j] = stark_int(self.basis[i], self.basis[j], **kwargs)
-                        # assume matrix is symmetric
-                        self._stark_matrix[j][i] = self._stark_matrix[i][j]
-        else:
-            computed_from_scratch = False
-            print('Using cached Stark matrix')
-        if kwargs.get('save_matrices', False) and computed_from_scratch:
-            save_matrix(self._stark_matrix, 'stark', self, **kwargs)
-        return self._stark_matrix
-
-    def zeeman_matrix(self, **kwargs):
-        """ Zeeman interaction matrix.
-        """
-        tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
-        cache = kwargs.get('cache_matrices', True)
-        if self._zeeman_matrix is None or cache is False:
-            if kwargs.get('load_matrices', False) and \
-               check_matrix('zeeman', self, **kwargs):
-                computed_from_scratch = False
-                self._zeeman_matrix = load_matrix('zeeman', self, **kwargs)
-            else:
-                computed_from_scratch = True
-                self._zeeman_matrix = np.zeros([self.num_states, self.num_states])
-                for i in trange(self.num_states, desc="calculate Zeeman terms", **tqdm_kwargs):
-                    for j in range(i, self.num_states):
-                        self._zeeman_matrix[i][j] = zeeman_int(self.basis[i], self.basis[j], **kwargs)
-                        # assume matrix is symmetric
-                        if i != j:
-                            self._zeeman_matrix[j][i] = self._zeeman_matrix[i][j]
-        else:
-            computed_from_scratch = False
-            print('Using cached Zeeman matrix')
-        if kwargs.get('save_matrices', False) and computed_from_scratch:
-            save_matrix(self._zeeman_matrix, 'zeeman', self, **kwargs)
-        return self._zeeman_matrix
-
-    def stark_zeeman(self, Efield, Bfield=0.0, **kwargs):
-        """ Diagonalise the total Hamiltonian, H_0 + H_S + H_Z, for parallel 
-            electric and magnetic fields.
-        
-            args:
-                Efield           dtype: float     units: V / m      
-
-                Bfield=0.0       dtype: float     units: T
-            
-            kwargs:
-                eig_vec=False    dtype: bool
-
-                                 returns the eigenvalues and eigenvectors.
-
-                eig_amp=None     dtype: list
-
-                                 calculate the sum of the square of the amplitudes
-                                 of the components of the listed basis states for 
-                                 each eigenvector, e.g., eig_amp=[1, 3, 5].
-                                 Requires eig_vec=False.
-            
-        """
-        get_eig_vec = kwargs.get('eig_vec', False)
-        eig_elements = kwargs.get('eig_amp', None)
-        # magnetic field
-        if Bfield != 0.0:
-            Bz = mu_B * Bfield / En_h
-            mat_z =  self.zeeman_matrix(**kwargs)
-            H_Z = Bz * mat_z
-        else:
-            H_Z = 0.0
-        # electric field
-        if Efield != 0.0:
-            Fz = Efield * e * a_0 / En_h
-            mat_s = self.stark_matrix(**kwargs)
-            H_S = Fz * mat_s / mu_me
-        else:
-            H_S = 0.0
-        # interaction Hamiltonian
-        H_int = H_S + H_Z          
-        # diagonalise H_tot, assuming matrix is Hermitian.
-        if get_eig_vec:
-            # eigenvalues and eigenvectors
-            eig_val, eig_vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-            return eig_val * En_h, eig_vec
-        elif eig_elements is not None:
-            # eigenvalues and partial eigenvector amplitudes
-            eig_val, vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-            eig_amp = np.sum(vec[eig_elements]**2.0, axis=0)
-            return eig_val, eig_amp
-        else:
-            # eigenvalues
-            eig_val = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
-            return eig_val * En_h
-
         
     def stark_map(self, Efield, Bfield=0.0, **kwargs):
         """ The eigenvalues of H_0 + H_S + H_Z, for a range of electric fields.
@@ -318,10 +233,9 @@ class Hamiltonian(object):
                 Bfield=0.0       dtype: float     units: T
             
             kwargs:
-                Efield_vec=[0.0,0.0,1.0]    dtype: [float]
+                field_angle=0.0    dtype: [float]
 
-                                 specifies the orientation of the electric field.
-                                 The quantisation axis is Z-axis
+                                 specifies the angle between the electric and magnetic fields.
                                  
                 eig_vec=False    dtype: bool
 
@@ -337,54 +251,48 @@ class Hamiltonian(object):
 
             Nb. A large map with eignvectors can take up a LOT of memory.
         """
-        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-        if Efield_vec == [0.0,0.0,1.0]:
-            field_orientation = 'parallel'
-        elif Efield_vec[2] == 0.0:
-            field_orientation = 'perpendicular'
-        else:
-            raise Exception('Arbitrary angles not currently supported. Use either parallel (Efield_vec=[0.0,0.0,1.0]), or perpendicular (Efield_vec[2]=0.0) field.')
-        print('Field orientation: ' + field_orientation)
+        if (not kwargs.get('field_angle', 0.0) == 0.0) and \
+            ((not self.MJ == None) or (not self.MJ_max == None)):
+            print('WARNING: If the fields are not parallel then all'+\
+                  ' ML sub-manifolds are required for accurate results!')
         
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         get_eig_vec = kwargs.get('eig_vec', False)
-        eig_vec_idx = kwargs.get('eig_vec_elements', None)
+        get_eig_vec_elements = kwargs.get('eig_vec_elements', None)
         num_fields = len(Efield)
         # initialise output arrays
         eig_val = np.empty((num_fields, self.num_states), dtype=float)
         if get_eig_vec:
             eig_vec = np.empty((num_fields, self.num_states, self.num_states), dtype=float)
-        elif eig_vec_idx is not None:
-            eig_vec_elements = np.empty((num_fields, self.num_states), dtype=float)
+        elif get_eig_vec_elements is not None:
+            eig_vec_elements = []
         # optional magnetic field
         if Bfield != 0.0:
             Bz = mu_B * Bfield / En_h
-            mat_z =  self.zeeman_matrix(**kwargs)
-            H_Z = Bz * mat_z
+            self._zeeman_matrix = interaction_matrix(matrix_type='zeeman', basis=self.basis, **kwargs)
+            H_Z = Bz * self._zeeman_matrix.matrix
         else:
             H_Z = 0.0
         # loop over electric field values
-        mat_s = self.stark_matrix(**kwargs)
+        self._stark_matrix = interaction_matrix(matrix_type='stark', basis=self.basis, **kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Fz = Efield[i] * e * a_0 / En_h
-            H_S = Fz * mat_s / mu_me
-            # Full interaction matrix. Unused terms are set to 0.0
-            H_int = H_S + H_Z
+            H_S = Fz * self._stark_matrix.matrix / mu_me
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
-                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-            elif eig_vec_idx is not None:
-                # eigenvalues and partial eigenvector
-                eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-                eig_vec_elements[i] = np.sum(vec[eig_vec_idx], axis=0)            
+                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_S + H_Z)
+            elif get_eig_vec_elements is not None:
+                # eigenvalues and partial eigenvector amplitudes
+                eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_S + H_Z)
+                eig_vec_elements.append(vec[:,get_eig_vec_elements])            
             else:
                 # eigenvalues
-                eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
+                eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_S + H_Z)[0]
         # output
         if get_eig_vec:
             return eig_val * En_h, eig_vec
-        elif eig_vec_idx is not None:
+        elif get_eig_vec_elements is not None:
             return eig_val * En_h, eig_vec_elements
         else:
             return eig_val * En_h
@@ -414,43 +322,41 @@ class Hamiltonian(object):
         """
         tqdm_kwargs = dict([(x.replace('tqdm_', ''), kwargs[x]) for x in kwargs.keys() if 'tqdm_' in x])
         get_eig_vec = kwargs.get('eig_vec', False)
-        eig_elements = kwargs.get('eig_amp', None)
+        get_eig_vec_elements = kwargs.get('eig_vec_elements', None)
         num_fields = len(Bfield)
         # initialise output arrays
         eig_val = np.empty((num_fields, self.num_states), dtype=float)
         if get_eig_vec:
             eig_vec = np.empty((num_fields, self.num_states, self.num_states), dtype=float)
-        elif eig_elements is not None:
-            eig_amp = np.empty((num_fields, self.num_states), dtype=float)
+        elif get_eig_vec_elements is not None:
+            eig_vec_elements = []
         # optional electric field
         if Efield != 0.0:
             Fz = Efield * e * a_0 / En_h
-            mat_s = self.stark_matrix(**kwargs)
-            H_S = Fz * mat_s / mu_me
+            self._stark_matrix = interaction_matrix(matrix_type='stark', basis=self.basis, **kwargs)
+            H_S = Fz * self._stark_matrix.matrix / mu_me
         else:
             H_S = 0.0
         # loop over magnetic field values
-        mat_z = self.zeeman_matrix(**kwargs)
+        self._zeeman_matrix = interaction_matrix(matrix_type='zeeman', basis=self.basis, **kwargs)
         for i in trange(num_fields, desc="diagonalise Hamiltonian", **tqdm_kwargs):
             Bz = mu_B * Bfield[i] / En_h
-            H_Z =  Bz * mat_z
-            # Full interaction matrix. Unused terms are set to 0.0
-            H_int = H_S + H_Z
+            H_Z =  Bz * self._zeeman_matrix.matrix 
             # diagonalise, assuming matrix is Hermitian.
             if get_eig_vec:
                 # eigenvalues and eigenvectors
-                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-            elif eig_elements is not None:
+                eig_val[i], eig_vec[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_S + H_Z)
+            elif get_eig_vec_elements is not None:
                 # eigenvalues and partial eigenvector amplitudes
-                eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)
-                eig_amp[i] = np.sum(vec[eig_elements]**2.0, axis=0)            
+                eig_val[i], vec = np.linalg.eigh(self.h0_matrix(**kwargs) + H_S + H_Z)
+                eig_vec_elements.append(vec[:,get_eig_vec_elements])           
             else:
                 # eigenvalues
-                eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_int)[0]
+                eig_val[i] = np.linalg.eigh(self.h0_matrix(**kwargs) + H_S + H_Z)[0]
         # output
         if get_eig_vec:
             return eig_val * En_h, eig_vec
-        elif eig_elements is not None:
+        elif get_eig_vec_elements is not None:
             return eig_val * En_h, eig_amp
         else:
             return eig_val * En_h
@@ -466,8 +372,8 @@ def basis_states(n_min, n_max, **kwargs):
             n_max             Maximum value of the principal quantum number.
         
         kwargs:
-            l_max = None      Maximum value of the orbital angular momentum quantum number.
-                              If l_max is None 0 < l < n.
+            L_max = None      Maximum value of the orbital angular momentum quantum number.
+                              If L_max is None 0 < L < n.
 
             S = None          Value of the total spin quanum number. If S is None S = [0, 1].
 
@@ -478,21 +384,21 @@ def basis_states(n_min, n_max, **kwargs):
                               total angular momentum quantum number. If MJ_max and MJ
                               are None -J <= MJ <= J.
     """
-    l_max = kwargs.get('l_max', None)
+    L_max = kwargs.get('L_max', None)
     S = kwargs.get('S', None)
     MJ = kwargs.get('MJ', None)
     MJ_max = kwargs.get('MJ_max', None)
-    basis = []
+    states = []
     n_rng = np.arange(n_min, n_max + 1, dtype='int')
     # loop over n range
     for n in n_rng:
-        if l_max is not None:
-            _l_max = min(l_max, n - 1)
+        if L_max is not None:
+            _L_max = min(L_max, n - 1)
         else:
-            _l_max = n - 1
-        l_rng = np.arange(0, _l_max + 1, dtype='int')
-        # loop over l range
-        for l in l_rng:
+            _L_max = n - 1
+        L_rng = np.arange(0, _L_max + 1, dtype='int')
+        # loop over L range
+        for L in L_rng:
             if S is None:
                 # singlet and triplet states
                 S_vals = [0, 1]
@@ -500,196 +406,31 @@ def basis_states(n_min, n_max, **kwargs):
                 S_vals = [S]
             for _S in S_vals:
                 # find all J vals and MJ substates
-                if l == 0:
+                if L == 0:
                     J = _S
                     if MJ is None:
                         for _MJ in np.arange(-J, J + 1):
                             if MJ_max is None or abs(_MJ) <= MJ_max:
-                                basis.append(State(n, l, _S, J, _MJ))
+                                states.append(State(n, L, _S, J, _MJ))
                     elif -J <= MJ <= J:
-                        basis.append(State(n, l, _S, J, MJ))
+                        states.append(State(n, L, _S, J, MJ))
                 elif _S == 0:
-                    J = l
+                    J = L
                     if MJ is None:
                         for _MJ in np.arange(-J, J + 1):
                             if MJ_max is None or abs(_MJ) <= MJ_max:
-                                basis.append(State(n, l, _S, J, _MJ))
+                                states.append(State(n, L, _S, J, _MJ))
                     elif -J <= MJ <= J:
-                        basis.append(State(n, l, _S, J, MJ))
+                        states.append(State(n, L, _S, J, MJ))
                 else:
-                    for J in [l + _S, l, l - _S]:
+                    for J in [L + _S, L, L - _S]:
                         if MJ is None:
                             for _MJ in np.arange(-J, J + 1):
                                 if MJ_max is None or abs(_MJ) <= MJ_max:
-                                    basis.append(State(n, l, _S, J, _MJ))
+                                    states.append(State(n, L, _S, J, _MJ))
                         elif -J <= MJ <= J:
-                            basis.append(State(n, l, _S, J, MJ))
-    return basis
-
-def stark_int(state_1, state_2, **kwargs):
-    stark_method = kwargs.get('stark_method', '6j')
-    if stark_method == '3j':
-        return stark_int_3j(state_1, state_2, **kwargs)
-    elif stark_method == '6j':
-        return stark_int_6j(state_1, state_2, **kwargs)
-    else:
-        raise Exception('Stark int method not recognised')
-    
-def stark_int_3j(state_1, state_2, **kwargs):
-    """ Stark interaction between two states.
-        
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """     
-    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-    if Efield_vec == [0.0,0.0,1.0]: # parallel fields
-        field_orientation = 'parallel'
-        q_arr   = [0]
-        tau_arr = [1.]
-    elif Efield_vec[2] == 0.0: # perpendicular fields
-        field_orientation = 'perpendicular'
-        q_arr   = [1,-1]
-        tau_arr = [(1./2)**0.5, (1./2)**0.5]
-    
-    delta_L = state_1.L - state_2.L
-    delta_S = state_1.S - state_2.S
-    delta_MJ = state_1.MJ - state_2.MJ  
-    # Projection of spin, cannot change
-    if abs(delta_L) == 1 and delta_S == 0 and \
-     ((field_orientation=='parallel'      and     delta_MJ  == 0) or \
-      (field_orientation=='perpendicular' and abs(delta_MJ) == 1)):
-        # For accumulating each element in the ML sum
-        sum_ML = []
-        # Loop through all combination of ML for each state
-        for MS_1 in np.arange(-state_1.S, state_1.S + 1):
-            for MS_2 in np.arange(-state_2.S, state_2.S + 1):
-                delta_MS = MS_1 - MS_2
-                # Change in projection of spin:  0, +/- 1
-                if ((field_orientation=='parallel'      and     delta_MS  in [0,1]) or \
-                    (field_orientation=='perpendicular' and abs(delta_MS) in [0,1])):
-                    ML_1 = state_1.MJ - MS_1
-                    ML_2 = state_2.MJ - MS_2
-                    # For accumulating each element in the angular component, q sum
-                    sum_q = []
-                    for q, tau in zip(q_arr, tau_arr):
-                        sum_q.append(tau * float(wigner_3j(state_2.L, 1, state_1.L, -ML_2, q, ML_1)))
-                    # Calculate the angular overlap term using Wigner-3J symbols
-                    ang_overlap_stark = ((2*state_2.L+1)*(2*state_1.L+1))**0.5 * \
-                                          np.sum(sum_q) * \
-                                          wigner_3j(state_2.L, 1, state_1.L, 0, 0, 0)
-                    if ang_overlap_stark != 0.0:
-                        sum_ML.append(float(clebsch_gordan(state_1.L, state_1.S, state_1.J,
-                                      ML_1, state_1.MJ - ML_1, state_1.MJ)) * \
-                                      float(clebsch_gordan(state_2.L, state_2.S, state_2.J,
-                                      ML_2, state_2.MJ - ML_2, state_2.MJ)) * \
-                                      ang_overlap_stark)
-
-        # Stark interaction
-        return np.sum(sum_ML) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    else:
-        return 0.0
-
-def stark_int_6j(state_1, state_2, **kwargs):
-    """ Stark interaction between two states.
-        
-        <n' l' S' J' MJ'| H_S |n l S J MJ>.
-    """     
-    Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-    if Efield_vec == [0.0,0.0,1.0]: # parallel fields
-        q_arr   = [0]
-        tau_arr = [1]
-    elif Efield_vec[2] == 0.0: # perpendicular fields
-        q_arr   = [1,-1]
-        tau_arr = [(1./2)**0.5, -(1./2)**0.5]
-    elif Efield_vec == [1.0,1.0,1.0]:
-        print('Using Efield_vec == [1.0,1.0,1.0]')
-        q_arr   = [1,0,-1]
-        tau_arr = [(1./2)**0.5, 1, -(1./2)**0.5]
-    
-    delta_L = state_1.L - state_2.L
-    delta_S = state_1.S - state_2.S
-    delta_MJ = state_1.MJ - state_2.MJ  
-    if abs(delta_L) == 1 and delta_S == 0:
-        S = state_1.S
-        sum_q = []
-        for q, tau in zip(q_arr, tau_arr):
-            sum_q.append( (-1.)**(int(state_1.J - state_1.MJ)) * \
-                        wigner_3j(state_1.J, 1, state_2.J, -state_1.MJ, -q, state_2.MJ) * \
-                        (-1.)**(int(state_1.L + S + state_2.J + 1.)) * \
-                        np.sqrt((2.*state_1.J+1.) * (2.*state_2.J+1.)) * \
-                        wigner_6j(state_1.J, 1., state_2.J, state_2.L, S, state_1.L) * \
-                        (-1.)**state_1.L * np.sqrt((2.*state_1.L+1.) * (2.*state_2.L+1.)) * \
-                        wigner_3j(state_1.L, 1, state_2.L, 0, 0, 0) * tau)
-            
-        return np.sum(sum_q) * rad_overlap(state_1.n_eff, state_1.L, state_2.n_eff, state_2.L)
-    return 0.0
-    
-def zeeman_int(state_1, state_2, **kwargs):
-    """ Zeeman interaction between two states.
-    """
-    delta_S = state_2.S - state_1.S
-    delta_L = state_2.L - state_1.L
-    delta_J = state_2.J - state_1.J
-    delta_MJ = state_2.MJ - state_1.MJ
-    if delta_MJ == 0 and \
-       delta_J in [-1, 0, 1] and \
-       delta_S == 0 and \
-       delta_L == 0:
-        L = state_1.L
-        MJ = state_1.MJ
-        S = state_1.S
-        g_L2 = g_L * (((2 * L + 1) * L * (L + 1))/6)**0.5
-        g_S2 = g_s * (((2 * S + 1) * S * (S + 1))/6)**0.5
-        return (-1)**(1 - MJ) * ((2 * state_1.J + 1) * (2 * state_2.J + 1))**0.5 * \
-            wigner_3j(state_2.J, 1, state_1.J, -MJ, 0, MJ) * 6**0.5 * ( \
-            wigner_6j(L, state_2.J, S, state_1.J, L, 1) * \
-            (-1)**(state_1.J + state_2.J + L + S) * g_L2 + \
-            wigner_6j(state_1.J, state_2.J, 1, S, S, L) * \
-            (-1)**(L + S) * g_S2)
-    else:
-        return 0.0
-    
-def save_matrix(matrix, matrix_type, ham, **kwargs):
-    filename = matrix_type + '_' + ham.filename()
-    if matrix_type == 'stark':
-        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-        if Efield_vec == [0.0,0.0,1.0]:
-            filename += '_parallel'
-        elif Efield_vec[2] == 0.0:
-            filename += '_perpendicular'
-            
-    save_dir = kwargs.get('matrices_dir', './')
-    np.savez_compressed(save_dir+filename, matrix=matrix)
-    print('Saved', matrix_type, 'matrix as, ')
-    print('\t', save_dir+filename)
-
-def load_matrix(matrix_type, ham, **kwargs):
-    filename = matrix_type + '_' + ham.filename()
-    if matrix_type == 'stark':
-        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-        if Efield_vec == [0.0,0.0,1.0]:
-            filename += '_parallel'
-        elif Efield_vec[2] == 0.0:
-            filename += '_perpendicular'
-    filename += '.npz'
-            
-    load_dir = kwargs.get('matrices_dir', './')
-    mat = np.load(load_dir+filename)
-    print('Loaded', matrix_type, 'matrix from, ')
-    print('\t', load_dir+filename)
-    return mat['matrix']
-
-def check_matrix(matrix_type, ham, **kwargs):
-    filename = matrix_type + '_' + ham.filename()
-    if matrix_type == 'stark':
-        Efield_vec = kwargs.get('Efield_vec', [0.0, 0.0, 1.0])
-        if Efield_vec == [0.0,0.0,1.0]:
-            filename += '_parallel'
-        elif Efield_vec[2] == 0.0:
-            filename += '_perpendicular'
-    filename += '.npz'
-    
-    load_dir = kwargs.get('matrices_dir', './')
-    return os.path.isfile(load_dir+filename) 
+                            states.append(State(n, L, _S, J, MJ))   
+    return Basis(states, n_min, n_max, S, L_max, MJ, MJ_max)
 
 def constants_info():
     constant_vals = {

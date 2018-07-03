@@ -15,7 +15,7 @@ _Bfield=0.1
 
 _matrices_dir='./saved_matrices/'
 
-S=None
+_S=None
 print(('n_min={}, n_max={}, S={}').format(_n_min, _n_max, S))
 mat0 = Hamiltonian(n_min=_n_min, n_max=_n_max, S=S)
 print('Number of basis states:', '%d'%mat0.num_states)
