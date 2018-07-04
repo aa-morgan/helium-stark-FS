@@ -3,6 +3,7 @@ import numpy as np
 import os.path
 from tqdm import trange
 from sympy.physics.wigner import clebsch_gordan, wigner_3j, wigner_6j
+import time
 
 #CODATA 2014, DOI: 10.1103/RevModPhys.88.035009
 c = 299792458.0 ## speed of light in vacuum
@@ -49,8 +50,8 @@ class interaction_matrix:
         cache = kwargs.get('cache_matrices', True)
         if self.matrix is None or cache is False:
             if kwargs.get('load_matrices', False) and \
-               check_matrix(self.type, self, **kwargs):
-                self.matrix = load_matrix(self.type, self, **kwargs)
+               self.check_matrix(**kwargs):
+                self.matrix = self.load_matrix(**kwargs)['matrix']
             else:
                 self.matrix = np.zeros([self.num_states, self.num_states])
                 for i in trange(self.num_states, desc='Calculating '+self.type+' terms', **tqdm_kwargs):
@@ -60,7 +61,7 @@ class interaction_matrix:
                         # assume matrix is symmetric
                         self.matrix[j][i] = self.matrix[i][j]
                 if kwargs.get('save_matrices', False):
-                    save_matrix(self, **kwargs)  
+                    self.save_matrix(**kwargs)  
         else:
             print("Using cached '{}' matrix".format(self.type))
             
@@ -187,45 +188,42 @@ class interaction_matrix:
             return 0.0
     
     def save_matrix(self, **kwargs):
-        filename = self.type + '_' + self.filename()
+        filename =  '{}_{}'.format(self.type, self.filename())
         if self.type == 'stark':
-            field_angle = kwargs.get('field_angle', 0.0)
-            filename += '_angle_{}'.format(field_angle)
-
-        save_dir = kwargs.get('matrices_dir', './')
-        np.savez_compressed(save_dir+filename, matrix=self.matrix)
+            filename += '_angle={}'.format(kwargs.get('field_angle', 0.0))
+        save_dir = os.path.join('.', kwargs.get('matrices_dir', ''))
+        if not os.path.isdir(save_dir):
+            os.mkdir(save_dir)
+        date = time.strftime("%b %d %Y %H:%M:%S", time.gmtime(time.time()))
+        np.savez_compressed(os.path.join(save_dir, filename), 
+                            matrix=self.matrix, date=date, params=self.basis.params)
         print("Saved '{}' matrix from, ".format(self.type))
-        print('\t', save_dir+filename)
+        print('\t', os.path.join(save_dir, filename))
 
     def load_matrix(self, **kwargs):
-        filename = self.type + '_' + self.filename()
+        filename = '{}_{}'.format(self.type, self.filename())
         if self.type == 'stark':
-            field_angle = kwargs.get('field_angle', 0.0)
-            filename += '_angle_{}'.format(field_angle)
+            filename += '_angle={}'.format(kwargs.get('field_angle', 0.0))
         filename += '.npz'
-
-        load_dir = kwargs.get('matrices_dir', './')
-        mat = np.load(load_dir+filename)
+        load_dir = os.path.join('.', kwargs.get('matrices_dir', ''))
+        mat = np.load(os.path.join(load_dir, filename))
         print("Loaded '{}' matrix from, ".format(self.type))
-        print('\t', load_dir+filename)
-        return mat['matrix']
+        print('\t', os.path.join(load_dir, filename))
+        return mat
 
     def check_matrix(self, **kwargs):
-        filename = self.type + '_' + self.filename()
+        filename = '{}_{}'.format(self.type, self.filename())
         if self.type == 'stark':
-            field_angle = kwargs.get('field_angle', 0.0)
-            filename += '_angle_{}'.format(field_angle)
+            filename += '_angle={}'.format(kwargs.get('field_angle', 0.0))
         filename += '.npz'
-
-        load_dir = kwargs.get('matrices_dir', './')
-        return os.path.isfile(load_dir+filename) 
+        load_dir = os.path.join('.', kwargs.get('matrices_dir', ''))
+        return os.path.isfile(os.path.join(load_dir, filename))
     
     def filename(self):
-        return  'n=' + str(self.basis.params.n_min) + '-' + str(self.basis.params.n_max) + '_' + \
-                'L_max=' + str(self.basis.params.L_max) + '_' + \
-                'S=' + str(self.basis.params.S) + '_' + \
-                'ML=' + str(self.basis.params.ML) + '_' + \
-                'ML_max=' + str(self.basis.params.ML_max)
+        return 'n={}-{}_L_max={}_S={}_MJ={}_MJ_max={}'.format(
+            self.basis.params.n_min, self.basis.params.n_max, 
+            self.basis.params.L_max, self.basis.params.S,
+            self.basis.params.MJ, self.basis.params.MJ_max)
                 
 def angular_overlap(L_1, L_2, M_1, M_2, **kwargs):
     angular_overlap_method = kwargs.get('angular_overlap_method', 'analytical')
